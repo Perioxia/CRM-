@@ -16,6 +16,7 @@ from app.services.sales.activity_parents import (
 from app.utils.audit import log_activity
 from app.utils.datetime_json import isoformat_utc
 from app.services.sales.lead_access import ensure_can_work_lead_id, scope_activity_list, scope_activity_rows
+from app.services.sales.lead_activity import mark_lead_contacted, mark_lead_responded
 from app.utils.dependencies import apply_company_scope, ensure_company_access, get_active_team_id, get_current_user
 
 router = APIRouter()
@@ -130,6 +131,10 @@ def create_call(
     )
     db.add(call)
     db.flush()
+    if direction == CallDirection.INBOUND.value:
+        mark_lead_responded(db, payload.lead_id)
+    else:
+        mark_lead_contacted(db, payload.lead_id)
     log_activity(
         db, user=current_user, action="created", entity_type="call",
         entity_id=call.id, entity_name=direction,

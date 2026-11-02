@@ -1,4 +1,6 @@
 from sqlalchemy import func
+
+from app.models.core.enums import LeadStatus
 from sqlalchemy.orm import Session, joinedload
 
 from app.models.core.team_membership import TeamMembership
@@ -8,6 +10,7 @@ from app.models.sales.territory import Territory
 from app.services.sales.lead_ownership import notify_lead_assigned
 
 MATCH_FIELDS = frozenset({"service_type", "source"})
+_FINISHED_STATUSES = (LeadStatus.CONVERTED, LeadStatus.LOST, LeadStatus.LOST_CLIENT)
 
 
 def round_robin_sales_on_team(db: Session, *, company_id: int, team_id: int) -> int | None:
@@ -66,13 +69,15 @@ def _rule_matches_lead(rule, lead: Lead) -> bool:
 def _user_id_with_lowest_load(db: Session, company_id: int, candidates: list[User]) -> int | None:
     if not candidates:
         return None
-    ranked = []
-    for user in candidates:
-        load = (
-            db.query(func.count(Lead.id))
-            .filter(Lead.company_id == company_id, Lead.assigned_to_id == user.id)
-            .scalar()
+    open_leads = dict(
+        db.query(Lead.assigned_to_id, func.count(Lead.id))
+        .filter(
+            Lead.company_id == company_id,
+            Lead.assigned_to_id.in_([user.id for user in candidates]),
+            Lead.deleted_at.is_(None),
+            Lead.status.notin_(_FINISHED_STATUSES),
         )
-        ranked.append((load, user.id, user))
-    ranked.sort()
-    return ranked[0][2].id
+        .group_by(Lead.assigned_to_id)
+        .all()
+    )
+    return min(candidates, key=lambda user: (open_leads.get(user.id, 0), user.id)).id

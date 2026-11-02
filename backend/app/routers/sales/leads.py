@@ -58,7 +58,7 @@ from pydantic import BaseModel
 from app.utils.helpers import normalize_email, normalize_phone, phone_variants
 from sqlalchemy import func as sa_func, or_
 from app.schemas.sales import (
-    LeadResponse, LeadListResponse, LeadCreate, LeadUpdate, LeadStatusUpdate,
+    LeadResponse, LeadListResponse, LeadCreate, LeadUpdate, LeadStatusUpdate, NoteCreate, note_text,
     SalesDashboardResponse, SalesDashboardMetrics, SalesDashboardTask,
 )
 from app.schemas.admin import MessageResponse
@@ -66,12 +66,26 @@ from app.models.core.enums import UserRole
 
 router = APIRouter()
 
+# The screens show all of these as Active.
+_WORKING_STATUSES = (
+    LeadStatus.NEW,
+    LeadStatus.ACTIVE,
+    LeadStatus.CONTACTED,
+    LeadStatus.QUALIFIED,
+    LeadStatus.PROPOSAL,
+)
+
 
 def _user_role_str(user: User) -> str:
     r = getattr(user, "role", None)
     if r is None:
         return ""
     return str(getattr(r, "value", r))
+
+
+def _contains_pattern(term: str) -> str:
+    escaped = term.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return f"%{escaped}%"
 
 
 def _with_clean_fields(lead_data):
@@ -212,13 +226,7 @@ def get_sales_dashboard(
     
     # Role-based scoping for leads
     if _user_role_str(current_user) == "sales":
-        if active_team_id is not None:
-            lead_query = lead_query.filter(
-                Lead.team_id == active_team_id,
-                or_(Lead.assigned_to_id == current_user.id, Lead.assigned_to_id.is_(None)),
-            )
-        else:
-            lead_query = lead_query.filter(Lead.assigned_to_id == current_user.id)
+        lead_query = lead_query.filter(Lead.assigned_to_id == current_user.id)
     elif _user_role_str(current_user) == "manager":
         if active_team_id is None:
             lead_query = lead_query.filter(False)
@@ -291,10 +299,10 @@ def get_sales_dashboard(
     source_counts = lead_query.with_entities(Lead.source, sa_func.count(Lead.id)).group_by(Lead.source).all()
     leads_by_source = [{"source": s or "Unknown", "count": c} for s, c in source_counts]
     
-    active_leads = lead_query.filter(Lead.status == LeadStatus.ACTIVE).count()
-    lost_leads = lead_query.filter(Lead.status == LeadStatus.LOST).count()
+    active_leads = lead_query.filter(Lead.status.in_(_WORKING_STATUSES)).count()
+    lost_leads = lead_query.filter(Lead.status.in_((LeadStatus.LOST, LeadStatus.LOST_CLIENT))).count()
     two_weeks_ago = datetime.now(timezone.utc) - timedelta(days=14)
-    stalled_leads = lead_query.filter(Lead.status == LeadStatus.ACTIVE, Lead.created_at < two_weeks_ago).count()
+    stalled_leads = lead_query.filter(Lead.status.in_(_WORKING_STATUSES), Lead.created_at < two_weeks_ago).count()
     
     # Revenue and Order calculations (company-scoped)
     inv_query = apply_company_scope(db.query(Invoice), Invoice, current_user)
@@ -393,6 +401,7 @@ def list_leads(
     sort: Optional[str] = Query(None, description="sort=score to order by score desc"),
     min_score: Optional[int] = Query(None, description="Only leads with score >= this"),
     unassigned: bool = Query(False),
+    claimed: bool = Query(False),
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=500),
     db: Session = Depends(get_db),
@@ -406,14 +415,17 @@ def list_leads(
         if _user_role_str(current_user) == "purchase":
             raise HTTPException(status_code=403, detail="Not allowed")
         query = query.filter(Lead.assigned_to_id.is_(None))
+    if claimed:
+        query = query.filter(Lead.assigned_to_id.isnot(None))
     if status:
         query = query.filter(Lead.status == status)
     if search:
-        search_pattern = f"%{search}%"
+        search_pattern = _contains_pattern(search)
         query = query.filter(
-            (Lead.name.ilike(search_pattern)) |
-            (Lead.email.ilike(search_pattern)) |
-            (Lead.company.ilike(search_pattern))
+            (Lead.name.ilike(search_pattern, escape="\\")) |
+            (Lead.email.ilike(search_pattern, escape="\\")) |
+            (Lead.company.ilike(search_pattern, escape="\\")) |
+            (Lead.phone.ilike(search_pattern, escape="\\"))
         )
     if min_score is not None:
         query = query.filter(Lead.score >= min_score)
@@ -423,7 +435,7 @@ def list_leads(
     else:
         order = Lead.created_at.desc()
     total = query.count()
-    leads = query.order_by(order).offset(skip).limit(limit).all()
+    leads = query.order_by(order, Lead.id.desc()).offset(skip).limit(limit).all()
 
     assignee_ids = {l.assigned_to_id for l in leads if l.assigned_to_id}
     assignee_map = {}
@@ -1241,12 +1253,16 @@ def list_lead_notes(
 @router.post("/{lead_id:int}/notes", status_code=status.HTTP_201_CREATED)
 def add_lead_note(
     lead_id: int,
-    content: str = Query(..., min_length=1),
+    body: Optional[NoteCreate] = None,
+    content: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
     active_team_id: Optional[int] = Depends(get_active_team_id),
 ):
     """Create a note for a lead."""
+    text = note_text(content, body)
+    if not text:
+        raise HTTPException(status_code=400, detail="Note cannot be empty")
     lead = apply_company_scope(db.query(Lead), Lead, current_user).filter(Lead.id == lead_id, Lead.deleted_at.is_(None)).first()
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
@@ -1256,7 +1272,7 @@ def add_lead_note(
 
     note = Note(
         company_id=current_user.company_id,
-        content=content.strip(),
+        content=text,
         lead_id=lead.id,
         created_by_id=current_user.id,
     )

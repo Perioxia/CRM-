@@ -7,6 +7,7 @@ from datetime import datetime, date, timedelta, timezone
 
 from app.database import get_db
 from app.services.sales.lead_access import ensure_can_work_lead
+from app.services.sales.lead_activity import refresh_next_follow_up
 from app.services.sales.recycle import hide_deleted_lead_rows
 from app.utils.dependencies import get_current_user, apply_company_scope, ensure_company_access, get_active_team_id
 from app.models.core.user import User
@@ -260,6 +261,7 @@ def create_follow_up(
     )
     
     db.add(new_fu)
+    refresh_next_follow_up(db, new_fu.lead_id)
     db.commit()
     db.refresh(new_fu)
     
@@ -294,6 +296,7 @@ def update_follow_up(
     if body.notes is not None:
         fu.notes = body.notes
     
+    refresh_next_follow_up(db, fu.lead_id)
     db.commit()
     
     return {"message": f"Follow-up {follow_up_id} updated"}
@@ -318,6 +321,7 @@ def complete_follow_up(
     fu.outcome = body.outcome
     fu.completed_at = datetime.now(timezone.utc)
     
+    refresh_next_follow_up(db, fu.lead_id)
     db.commit()
     
     return {
@@ -348,6 +352,7 @@ def reschedule_follow_up(
     if body.reason:
         fu.notes = f"{fu.notes or ''}\n[Rescheduled: {body.reason}]"
     
+    refresh_next_follow_up(db, fu.lead_id)
     db.commit()
     
     return {
@@ -371,7 +376,9 @@ def delete_follow_up(
     ensure_company_access(fu, current_user)
     _assert_follow_up_lead_access(db, fu, current_user, active_team_id, "You can only delete follow-ups for leads you can access")
 
+    lead_id = fu.lead_id
     db.delete(fu)
+    refresh_next_follow_up(db, lead_id)
     db.commit()
     
     return {"message": f"Follow-up {follow_up_id} deleted"}

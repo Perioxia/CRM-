@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.models.core.company_settings import CompanySettings
 from app.models.sales.client import Client
 from app.models.sales.lead import Lead
+from app.services.sales.lead_activity import mark_lead_responded
 from app.models.sales.whatsapp import WhatsAppMessage, WhatsAppTemplate
 from app.utils.helpers import normalize_phone
 
@@ -212,6 +213,7 @@ def ingest_gupshup_inbound(db: Session, body: dict, query_source: Optional[str] 
             status="received",
         )
     )
+    mark_lead_responded(db, lead.id if lead is not None else None)
     db.commit()
 
 

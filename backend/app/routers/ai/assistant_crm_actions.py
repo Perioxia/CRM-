@@ -22,6 +22,7 @@ from app.models.sales.task import Task
 from app.utils.dependencies import apply_company_scope, ensure_company_access
 from app.utils.helpers import normalize_email, normalize_phone
 from app.services.sales.lead_access import can_view_lead
+from app.services.sales.lead_activity import refresh_next_follow_up
 from app.services.sales.lead_ownership import claim_open_lead
 from app.utils.audit import log_activity
 
@@ -428,6 +429,7 @@ def ai_create_follow_up(
         created_by_id=user.id,
     )
     db.add(fu)
+    refresh_next_follow_up(db, fu.lead_id)
     db.commit()
     db.refresh(fu)
     return {"follow_up_id": fu.id, "lead_id": lead_id}
@@ -453,6 +455,7 @@ def ai_complete_follow_up(db: Session, user: User, follow_up_id: int, outcome: s
     fu.status = "Completed"
     fu.outcome = oc[:5000]
     fu.completed_at = datetime.now(timezone.utc)
+    refresh_next_follow_up(db, fu.lead_id)
     db.commit()
     return {"follow_up_id": follow_up_id, "status": "Completed"}
 
@@ -490,6 +493,7 @@ def ai_reschedule_follow_up(
             return {"ok": False, "summary": "new_time must be HH:MM."}
     if reason and str(reason).strip():
         fu.notes = f"{fu.notes or ''}\n[Rescheduled: {str(reason).strip()[:500]}]"
+    refresh_next_follow_up(db, fu.lead_id)
     db.commit()
     return {"follow_up_id": follow_up_id, "scheduled_date": str(fu.scheduled_date)}
 
@@ -508,7 +512,9 @@ def ai_delete_follow_up(db: Session, user: User, follow_up_id: int, context: dic
         return {"ok": False, "summary": "You cannot delete this follow-up."}
     if role == "manager" and (ctx_team is None or lead.team_id != ctx_team):
         return {"ok": False, "summary": "Outside your team."}
+    lead_id_of_follow_up = fu.lead_id
     db.delete(fu)
+    refresh_next_follow_up(db, lead_id_of_follow_up)
     db.commit()
     return {"deleted_follow_up_id": follow_up_id}
 

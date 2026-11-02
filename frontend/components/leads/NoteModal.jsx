@@ -17,7 +17,7 @@ export default function NoteModal({ isOpen, onClose, onRefresh, endpoint }) {
         setLoading(true);
         setError(null);
         try {
-            await api.post(endpoint, null, { params: { content: content.trim() } });
+            await api.post(endpoint, { content: content.trim() });
             onRefresh();
             onClose();
             setContent('');
