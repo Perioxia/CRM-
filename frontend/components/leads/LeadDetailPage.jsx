@@ -21,6 +21,7 @@ import {
 import { formatDistanceToNow, parseISO } from 'date-fns';
 import { formatDistanceToTaskDue } from '../../lib/taskDue';
 import { clientsHomePath, leadsHomePath } from '../../lib/leadsPaths';
+import { announceLeadsChanged } from '../../lib/useLiveRefresh';
 import api from '../../services/api';
 import { useAuth } from '../../contexts/AuthContext';
 import TaskModal from './TaskModal';
@@ -62,15 +63,18 @@ export default function LeadDetailPage() {
 
   const applyLeadPayload = (data) => {
     const isManager = pathname.startsWith('/manager');
+    const isMd = pathname.startsWith('/md');
     const salesCreated = data.created_by_role === 'sales';
+    const ownerHasLeft = data.assignee_active === false;
     const isConvertedStatus = ['Converted'].includes(data.status);
-    const canReassign = isManager && !salesCreated && !isConvertedStatus;
+    const canReassign = !isConvertedStatus && (isMd || (isManager && (!salesCreated || ownerHasLeft)));
     data.permissions = {
       canEdit: !['Converted', 'Lost', 'Lost Client'].includes(data.status),
       canConvert: !['Converted', 'Lost', 'Lost Client'].includes(data.status),
       canAddTask: true,
       canAddNote: true,
-      canReassign
+      canReassign,
+      canSendToPool: canReassign && !!data.assigned_to_id
     };
     setLead(data);
     setCustomDraft(data.custom_fields || {});
@@ -112,8 +116,20 @@ export default function LeadDetailPage() {
       await api.put(`/leads/${id}`, { assigned_to_id: newOwnerId });
       setIsReassignModalOpen(false);
       fetchLeadData();
+      announceLeadsChanged();
     } catch (err) {
       alert(err.response?.data?.detail || "Failed to reassign lead");
+    }
+  };
+
+  const handleSendToPool = async () => {
+    if (!window.confirm('Send this lead back to the pool? Anyone on the team can then claim it.')) return;
+    try {
+      await api.post(`/leads/${id}/release`);
+      fetchLeadData();
+      announceLeadsChanged();
+    } catch (err) {
+      alert(err.response?.data?.detail || 'Could not send this lead back to the pool');
     }
   };
 
@@ -175,7 +191,9 @@ export default function LeadDetailPage() {
       fetchLeadData();
     } catch (err) {
       alert(err.response?.data?.detail || "Failed to claim lead");
+      fetchLeadData();
     } finally {
+      announceLeadsChanged();
       setClaiming(false);
     }
   };
@@ -315,6 +333,14 @@ export default function LeadDetailPage() {
                 className="px-4 py-2 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 text-sm font-medium rounded-lg hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors"
                >
                 Reassign Owner
+              </button>
+            )}
+            {lead.permissions?.canSendToPool && (
+              <button
+                onClick={handleSendToPool}
+                className="px-4 py-2 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 text-sm font-medium rounded-lg hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors"
+              >
+                Back to Pool
               </button>
             )}
             {lead.permissions?.canEdit && (

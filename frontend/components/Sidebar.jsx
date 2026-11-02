@@ -9,6 +9,7 @@ import { useChat } from '../contexts/ChatContext';
 import LanguageToggle from './LanguageToggle';
 import { financeService } from '../services/financeService';
 import api from '../services/api';
+import { useLiveRefresh } from '../lib/useLiveRefresh';
 import {
     LayoutDashboard,
     Users,
@@ -251,26 +252,27 @@ export default function Sidebar({ isOpen, setIsOpen }) {
         fetchModules();
     }, [fetchModules, loading, user]);
 
-    useEffect(() => {
+    const fetchPoolCount = useCallback(async () => {
         if (loading || !user) return;
         const role = user?.role || 'sales';
         const hasPool = (ROLE_NAVIGATION[role] || []).some((item) => item.name === 'Unassigned Pool');
         if (!hasPool) {
             setUnassignedCount(0);
-            return undefined;
+            return;
         }
-        let cancelled = false;
-        api.get('/leads', { params: { unassigned: true, limit: 1 } })
-            .then((res) => {
-                if (!cancelled) setUnassignedCount(Number(res.data?.total) || 0);
-            })
-            .catch(() => {
-                if (!cancelled) setUnassignedCount(0);
-            });
-        return () => {
-            cancelled = true;
-        };
+        try {
+            const res = await api.get('/leads', { params: { unassigned: true, limit: 1 } });
+            setUnassignedCount(Number(res.data?.total) || 0);
+        } catch {
+            // Keep the last count: a failed background refresh is not worth an error in the sidebar.
+        }
     }, [loading, user?.role, user?.id]);
+
+    useEffect(() => {
+        fetchPoolCount();
+    }, [fetchPoolCount]);
+
+    useLiveRefresh(fetchPoolCount);
 
     useEffect(() => {
         if (loading || !user) return;

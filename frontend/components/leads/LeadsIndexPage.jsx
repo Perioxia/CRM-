@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useSearchParams, usePathname } from 'next/navigation';
 import Link from 'next/link';
 import { formatDistanceToNow, parseISO, differenceInDays } from 'date-fns';
@@ -8,6 +8,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import api from '../../services/api';
 import { normalizeLeadStatus } from '../../lib/leadStatus';
 import { leadsHomePath, unassignedLeadsPath } from '../../lib/leadsPaths';
+import { announceLeadsChanged, useLiveRefresh } from '../../lib/useLiveRefresh';
 import LeadModal from './LeadModal';
 import LeadImportModal from './LeadImportModal';
 import { useImportUndo } from '../shared/CsvImportModal';
@@ -39,6 +40,7 @@ export default function Leads() {
   const [isImportOpen, setIsImportOpen] = useState(false);
   const [error, setError] = useState(null);
   const [now, setNow] = useState(null);
+  const latestRequest = useRef(0);
   
   const searchParams = useSearchParams();
   const pathname = usePathname();
@@ -89,9 +91,12 @@ export default function Leads() {
     };
   }, [user?.id, user?.role]);
 
-  const fetchLeads = async () => {
-    setLoading(true);
-    setError(null);
+  const fetchLeads = async ({ silent = false } = {}) => {
+    const request = ++latestRequest.current;
+    if (!silent) {
+      setLoading(true);
+      setError(null);
+    }
     try {
       // Fetch all leads for this user and filter locally to avoid backend enum capitalization mismatches
       const response = await api.get('/leads', { params: { limit: 500 } });
@@ -112,13 +117,26 @@ export default function Leads() {
         data = data.filter((l) => l.assigned_to_id == null);
       }
 
-      setLeads(data);
+      if (request === latestRequest.current) setLeads(data);
     } catch (err) {
       console.error("Failed to fetch leads", err);
-      setError('Unable to load leads. Please try again.');
+      // A failed background refresh keeps the list on screen; the next one will try again.
+      if (!silent) setError('Unable to load leads. Please try again.');
     } finally {
-      setLoading(false);
+      if (request === latestRequest.current) setLoading(false);
     }
+  };
+
+  useLiveRefresh(() => fetchLeads({ silent: true }));
+
+  const handleLeadCreated = (lead) => {
+    const isOpen = lead?.assigned_to_id == null;
+    setActiveTab((tab) => {
+      if (tab === 'all') return tab;
+      return isOpen ? 'open' : 'claimed';
+    });
+    showToast(t(isOpen ? 'Lead created. It is open for your team to claim.' : 'Lead created'), 'success');
+    announceLeadsChanged();
   };
 
   const { canUndo, undo, undoing, refreshBatch } = useImportUndo('lead', fetchLeads);
@@ -364,6 +382,11 @@ export default function Leads() {
                               <Briefcase size={11} strokeWidth={2} /> {lead.company}
                             </p>
                           )}
+                          {user?.role !== 'sales' && lead.assigned_to_name && (
+                            <p className="text-[12px] text-muted truncate mt-0.5">
+                              {t('Owner')}: {lead.assigned_to_name}
+                            </p>
+                          )}
                         </div>
                         <div className="w-[20%] flex justify-center">
                           <span className={`badge ${STATUS_STYLES[lead.status] || STATUS_STYLES['Active']}`}>
@@ -398,6 +421,7 @@ export default function Leads() {
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
         onRefresh={fetchLeads}
+        onCreated={handleLeadCreated}
       />
       <LeadImportModal
         isOpen={isImportOpen}

@@ -6,6 +6,7 @@ import { usePathname } from 'next/navigation';
 import { Loader2 } from 'lucide-react';
 import api from '../../services/api';
 import { leadsHomePath } from '../../lib/leadsPaths';
+import { announceLeadsChanged, useLiveRefresh } from '../../lib/useLiveRefresh';
 import { useAuth } from '../../contexts/AuthContext';
 import { useT } from '../../contexts/LocaleContext';
 import KPICard from '../shared/KPICard';
@@ -89,6 +90,8 @@ export default function UnassignedPoolPage() {
     load();
   }, [load]);
 
+  useLiveRefresh(() => load({ silent: true }));
+
   useEffect(() => {
     if (canAssign) loadMembers();
   }, [canAssign, loadMembers]);
@@ -100,16 +103,12 @@ export default function UnassignedPoolPage() {
       await api.post(`/leads/${id}/claim`);
       setNoticeKind('success');
       setNotice(t('Lead claimed.'));
-      await load({ silent: true });
     } catch (err) {
       setNoticeKind('error');
-      const detail = apiDetail(err, t('Could not claim lead.'));
-      setNotice(detail);
-      if (/already assigned/i.test(detail)) {
-        await load({ silent: true });
-      }
+      setNotice(apiDetail(err, t('Could not claim lead.')));
     } finally {
       setBusyId(null);
+      announceLeadsChanged();
     }
   };
 
@@ -123,7 +122,7 @@ export default function UnassignedPoolPage() {
     setBusyId(id);
     setNotice(null);
     try {
-      await api.put(`/leads/${id}`, { assigned_to_id: assignedToId });
+      await api.put(`/leads/${id}`, { assigned_to_id: assignedToId, only_if_unassigned: true });
       setNoticeKind('success');
       setNotice(t('Lead assigned.'));
       setAssignees((prev) => {
@@ -131,12 +130,12 @@ export default function UnassignedPoolPage() {
         delete next[id];
         return next;
       });
-      await load({ silent: true });
     } catch (err) {
       setNoticeKind('error');
       setNotice(apiDetail(err, t('Could not assign lead.')));
     } finally {
       setBusyId(null);
+      announceLeadsChanged();
     }
   };
 

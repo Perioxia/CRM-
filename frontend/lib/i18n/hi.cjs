@@ -8,6 +8,9 @@ const hi = {
   // --- Sales sidebar nav ---
   Dashboard: "डैशबोर्ड",
   Leads: "लीड",
+  Owner: "मालिक",
+  "Lead created": "लीड बनाई गई",
+  "Lead created. It is open for your team to claim.": "लीड बनाई गई। आपकी टीम इसे क्लेम कर सकती है।",
   Clients: "ग्राहक",
   Accounts: "कंपनियाँ",
   Deals: "सौदे",
