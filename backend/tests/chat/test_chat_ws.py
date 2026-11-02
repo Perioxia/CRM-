@@ -1,14 +1,16 @@
 import json
+import threading
 import time
+from collections import Counter
 
 import pytest
 from starlette.websockets import WebSocketDisconnect
 
 from app.config import settings
-from app.models.core.user import User
 from app.routers.chat import ws as ws_module
+from app.services.chat import service
 from app.services.chat.realtime import hub
-from tests.chat.conftest import ORIGIN, As
+from tests.chat.conftest import ORIGIN, As, change_user
 
 WS = "/api/chat/ws"
 
@@ -177,15 +179,51 @@ def test_oversized_frame_closes_socket(org):
     ws.__exit__(None, None, None)
 
 
-def test_deactivated_user_socket_closed_on_recheck(org, db, monkeypatch):
+def test_deactivated_user_socket_closed_on_recheck(org, monkeypatch):
     monkeypatch.setattr(ws_module, "PING_SECONDS", 0.1)
     monkeypatch.setattr(ws_module, "RECHECK_SECONDS", 0.1)
     sales = As("sales@a.test")
     ws, sock = _connect(sales)
     assert json.loads(sock.receive_text())["type"] == "ready"
-    user = db.query(User).filter(User.id == org["users"]["sales"].id).first()
-    user.is_active = False
-    db.commit()
+    change_user(org["users"]["sales"].id, is_active=False)
+    assert _close_code(sock) == ws_module.CLOSE_FORBIDDEN
+    ws.__exit__(None, None, None)
+
+
+def test_socket_never_uses_one_session_from_two_threads(org, monkeypatch):
+    """The receiver and the watchdog reach the database at the same moment. On PostgreSQL a shared
+    session raises there, which closes the socket and ends any call it is in."""
+    monkeypatch.setattr(ws_module, "PING_SECONDS", 0.01)
+    monkeypatch.setattr(ws_module, "RECHECK_SECONDS", 0)
+    real_check = service.account_is_usable
+    guard = threading.Lock()
+    in_use, overlaps, seen = set(), [], Counter()
+
+    def watched_check(db, user_id, token_version=None):
+        with guard:
+            if overlaps or id(db) in in_use:
+                overlaps.append(id(db))
+                return None
+            in_use.add(id(db))
+            seen["recheck" if token_version is not None else "typing"] += 1
+        time.sleep(0.01)
+        try:
+            return real_check(db, user_id, token_version)
+        finally:
+            with guard:
+                in_use.discard(id(db))
+
+    monkeypatch.setattr(service, "account_is_usable", watched_check)
+    sales = As("sales@a.test")
+    ws, sock = _connect(sales)
+    assert json.loads(sock.receive_text())["type"] == "ready"
+    for conversation_id in range(1, 31):
+        sock.send_text(json.dumps({"type": "typing", "conversation_id": conversation_id}))
+    finished = _wait_for(lambda: overlaps or (seen["typing"] == 30 and seen["recheck"] >= 3), timeout=10)
+    assert not overlaps
+    assert finished, seen
+    # The server closes it, so nothing is still on the shared test database when the test ends.
+    change_user(org["users"]["sales"].id, is_active=False)
     assert _close_code(sock) == ws_module.CLOSE_FORBIDDEN
     ws.__exit__(None, None, None)
 
