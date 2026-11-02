@@ -33,6 +33,7 @@ class LeadUpdate(BaseModel):
     service_type: Optional[str] = None
     notes: Optional[str] = None
     assigned_to_id: Optional[int] = None
+    only_if_unassigned: bool = False
     custom_fields: Optional[dict] = None
     tags: Optional[List[str]] = None
 

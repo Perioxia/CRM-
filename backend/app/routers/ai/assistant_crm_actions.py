@@ -21,6 +21,8 @@ from app.models.finance.invoice import Invoice
 from app.models.sales.task import Task
 from app.utils.dependencies import apply_company_scope, ensure_company_access
 from app.utils.helpers import normalize_email, normalize_phone
+from app.services.sales.lead_access import can_view_lead
+from app.services.sales.lead_ownership import claim_open_lead
 from app.utils.audit import log_activity
 
 from app.routers.sales import leads as leads_router
@@ -192,13 +194,14 @@ def ai_claim_lead(db: Session, user: User, lead_id: int, context: dict | None) -
         return {"ok": False, "summary": "Only sales users can claim leads."}
     ctx_team = _ctx_team_id(context)
     lead = _get_lead_scoped(db, user, lead_id)
-    if not lead:
+    if not lead or lead.deleted_at is not None:
         return {"ok": False, "summary": "Lead not found."}
     if lead.assigned_to_id is not None:
         return {"ok": False, "summary": "This lead is already assigned."}
-    if ctx_team is not None and lead.team_id != ctx_team:
+    if not can_view_lead(lead, user, ctx_team, db):
         return {"ok": False, "summary": "Lead does not belong to your active team."}
-    lead.assigned_to_id = user.id
+    if not claim_open_lead(db, lead, user):
+        return {"ok": False, "summary": "This lead is already assigned."}
     log_activity(db, user=user, action="claimed", entity_type="lead", entity_id=lead.id, entity_name=lead.name, after=user.full_name)
     db.commit()
     return {"lead_id": lead.id, "claimed_by": user.id}

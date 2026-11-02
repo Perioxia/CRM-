@@ -12,6 +12,7 @@ from datetime import datetime
 from urllib.parse import parse_qs, urlparse
 
 import httpx
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.models.core.company_settings import CompanySettings
@@ -22,6 +23,7 @@ from app.services.sales.lead_import import insert_new_leads, preview_import
 logger = logging.getLogger("app")
 
 MAX_SHEET_BYTES = 2 * 1024 * 1024
+_SHEET_SYNC_LOCK = 7301
 _SHEET_ID = re.compile(r"/spreadsheets/d/([a-zA-Z0-9-_]+)")
 _SHARE_HINT = (
     "Could not read that sheet. Share it as Anyone with the link can view, then try again."
@@ -111,10 +113,27 @@ def _stamp(row: CompanySettings, message: str) -> None:
     row.lead_sheet_last_result = message[:255]
 
 
+def _claim_sheet_sync(db: Session, company_id: int) -> bool:
+    """Only one sync per company at a time, or both would add the same rows. Released on commit."""
+    if db.get_bind().dialect.name != "postgresql":
+        return True
+    return bool(db.execute(
+        text("SELECT pg_try_advisory_xact_lock(:scope, :company_id)"),
+        {"scope": _SHEET_SYNC_LOCK, "company_id": company_id},
+    ).scalar())
+
+
 def sync_sheet(db: Session, *, user, team_id: int) -> dict:
     row = _settings(db, user.company_id)
     if not row.lead_sheet_url:
         raise ValueError("No Google Sheet is connected.")
+    if not _claim_sheet_sync(db, user.company_id):
+        return {
+            "created": 0,
+            "skipped_duplicate": 0,
+            "skipped_invalid": 0,
+            "last_result": row.lead_sheet_last_result,
+        }
     try:
         contents = fetch_sheet_csv(row.lead_sheet_url)
         preview = preview_import(db, user.company_id, contents, None)

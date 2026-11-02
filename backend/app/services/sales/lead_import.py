@@ -200,7 +200,15 @@ def new_leads_from_preview(preview: dict) -> list[dict]:
     return [row["values"] for row in preview["rows"] if row["status"] == "new"]
 
 
-def insert_new_leads(db: Session, *, user, team_id: int, preview: dict, default_source: str) -> list[Lead]:
+def insert_new_leads(
+    db: Session,
+    *,
+    user,
+    team_id: int,
+    preview: dict,
+    default_source: str,
+    owner_id: int | None = None,
+) -> list[Lead]:
     """Insert rows classified as new. Existing email or phone matches stay untouched."""
     created: list[Lead] = []
     for values in new_leads_from_preview(preview):
@@ -218,7 +226,7 @@ def insert_new_leads(db: Session, *, user, team_id: int, preview: dict, default_
                 linkedin_url=values.get("linkedin_url") or None,
                 notes=values.get("notes") or None,
                 status="New",
-                assigned_to_id=None,
+                assigned_to_id=owner_id,
                 created_by_id=user.id,
                 team_id=team_id,
             )

@@ -205,6 +205,7 @@ def commit_leads_import(
             team_id=team_id,
             preview=preview,
             default_source="CSV Import",
+            owner_id=current_user.id if user_role(current_user) == "sales" else None,
         )
         if created:
             db.commit()
@@ -247,6 +248,7 @@ def import_leads_text(
             team_id=team_id,
             preview=preview,
             default_source="CSV Import",
+            owner_id=current_user.id if user_role(current_user) == "sales" else None,
         )
         if created:
             db.commit()
@@ -480,6 +482,7 @@ def import_leads(
             team_id=team_id,
             preview=preview,
             default_source="CSV Import",
+            owner_id=current_user.id if user_role(current_user) == "sales" else None,
         )
         if not created and preview["counts"]["duplicate"] == 0:
             raise HTTPException(status_code=400, detail="No valid data found in CSV.")

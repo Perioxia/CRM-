@@ -5,6 +5,7 @@ from app.models.core.team_membership import TeamMembership
 from app.models.core.user import User
 from app.models.sales.lead import Lead
 from app.models.sales.territory import Territory
+from app.services.sales.lead_ownership import notify_lead_assigned
 
 MATCH_FIELDS = frozenset({"service_type", "source"})
 
@@ -46,6 +47,7 @@ def assign_lead_by_territory(db: Session, lead: Lead) -> None:
     user_id = round_robin_sales_on_team(db, company_id=lead.company_id, team_id=territory.team_id)
     if user_id is not None:
         lead.assigned_to_id = user_id
+        notify_lead_assigned(db, lead, user_id, "A new lead was assigned to you.")
 
 
 def _territory_matches_lead(territory: Territory, lead: Lead) -> bool:

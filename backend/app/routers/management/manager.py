@@ -12,6 +12,7 @@ from app.models.sales.task import Task
 from app.models.sales.client import Client
 from app.models.finance.invoice import Invoice
 from app.schemas.admin import MessageResponse
+from app.services.sales.lead_ownership import ensure_assignable, manager_may_move_lead, move_lead_to_owner
 from app.utils.notify import notify_role_users, send_notification
 from app.models.hr.transfer_request import TeamTransferRequest
 from app.schemas.management import TransferRequestCreate, TransferRequestResponse
@@ -438,10 +439,8 @@ def reassign_lead(
     lead_status_val = lead.status.value if hasattr(lead.status, "value") else str(lead.status)
     if lead_status_val == "Converted":
         raise HTTPException(status_code=403, detail="Cannot reassign a converted lead")
-    if lead.created_by_id:
-        creator = db.query(User).filter(User.id == lead.created_by_id).first()
-        if creator and _role_value(creator.role) == "sales":
-            raise HTTPException(status_code=403, detail="Cannot reassign a lead created by a sales executive")
+    if not manager_may_move_lead(db, lead):
+        raise HTTPException(status_code=403, detail="Cannot reassign a lead created by a sales executive")
 
     new_assignee = (
         apply_company_scope(db.query(User), User, current_user)
@@ -451,19 +450,8 @@ def reassign_lead(
     )
     if not new_assignee:
         raise HTTPException(status_code=404, detail="Assignee not found or not in your team")
-    
-    previous_assignee_id = lead.assigned_to_id
-    lead.assigned_to_id = new_assignee_id
-    if previous_assignee_id != new_assignee_id and new_assignee_id != current_user.id:
-        send_notification(
-            db,
-            new_assignee_id,
-            title=f"Lead Reassigned: {lead.name}",
-            message=f"{current_user.full_name} reassigned this lead to you.",
-            type="info",
-            link=_lead_link_for_role(new_assignee.role, lead.id),
-            category="leads",
-        )
+    ensure_assignable(db, current_user, new_assignee_id)
+    move_lead_to_owner(db, lead, new_assignee, current_user)
     db.commit()
     
     return {

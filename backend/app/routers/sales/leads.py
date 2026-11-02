@@ -20,9 +20,21 @@ from app.services.sales.lead_access import (
     can_view_lead,
     ensure_can_view_lead,
     ensure_can_work_lead,
-    member_team_ids,
+    lead_page_path,
     scope_visible_leads,
     scope_workable_leads,
+)
+from app.services.sales.lead_ownership import (
+    assign_open_lead,
+    claim_open_lead,
+    ensure_assignable,
+    lead_is_converted,
+    manager_may_move_lead,
+    move_lead_to_owner,
+    notify_lead_assigned,
+    return_lead_to_pool,
+    user_on_team,
+    users_home_team,
 )
 from app.services.sales.territory import assign_lead_by_territory
 from app.services.sales.workflow import run_workflows
@@ -52,21 +64,6 @@ def _user_role_str(user: User) -> str:
     if r is None:
         return ""
     return str(getattr(r, "value", r))
-
-
-def _sales_can_claim_lead(
-    lead: Lead,
-    current_user: User,
-    active_team_id: Optional[int],
-    db: Session,
-) -> None:
-    if active_team_id is not None:
-        if lead.team_id is not None and lead.team_id != active_team_id:
-            raise HTTPException(status_code=403, detail="Lead does not belong to your active team")
-        return
-    teams = member_team_ids(db, current_user)
-    if lead.team_id is not None and teams and lead.team_id not in teams:
-        raise HTTPException(status_code=403, detail="Lead does not belong to your team")
 
 
 def _lead_status_value(lead: Lead) -> str:
@@ -472,7 +469,7 @@ def list_team_members_for_assignment(
     elif role == "md":
         members = (
             apply_company_scope(db.query(User), User, current_user)
-            .filter(User.role == "sales")
+            .filter(User.role == "sales", User.is_active.is_(True))
             .all()
         )
         return {
@@ -490,13 +487,13 @@ def list_team_members_for_assignment(
     members = (
         apply_company_scope(db.query(User), User, current_user)
         .join(TeamMembership, TeamMembership.user_id == User.id)
-        .filter(TeamMembership.team_id == team_scope_id, User.role == "sales")
+        .filter(TeamMembership.team_id == team_scope_id, User.role == "sales", User.is_active.is_(True))
         .all()
     )
     if not members:
         members = (
             apply_company_scope(db.query(User), User, current_user)
-            .filter(User.team_id == team_scope_id, User.role == "sales")
+            .filter(User.team_id == team_scope_id, User.role == "sales", User.is_active.is_(True))
             .all()
         )
     return {
@@ -628,6 +625,7 @@ def get_lead(
         "notes_list": notes_list,
         "assignee": assignee.full_name if assignee else "Open to Anyone",
         "assigned_to_id": lead.assigned_to_id,
+        "assignee_active": bool(assignee.is_active) if assignee else None,
         "created_by_id": lead.created_by_id,
         "created_by_name": creator.full_name if creator else None,
         "created_by_role": _user_role_str(creator) if creator else None,
@@ -712,28 +710,6 @@ def create_lead(
     if _user_role_str(current_user) == "purchase":
         raise HTTPException(status_code=403, detail="Purchase users cannot create leads")
 
-    # Validation for assigned_to_id
-    assigned_to_id = lead_data.assigned_to_id
-    if assigned_to_id:
-        assignee = apply_company_scope(db.query(User), User, current_user).filter(User.id == assigned_to_id).first()
-        if not assignee:
-            raise HTTPException(status_code=400, detail="Assigned user not found in your company")
-
-        # If manager is assigning, assignee must be in the active team
-        if _user_role_str(current_user) == "manager":
-            if active_team_id is None:
-                raise HTTPException(status_code=400, detail="Active team required for manager actions")
-            assignee_in_team = apply_company_scope(db.query(TeamMembership), TeamMembership, current_user).filter(
-                TeamMembership.team_id == active_team_id,
-                TeamMembership.user_id == assignee.id,
-            ).first()
-            if not assignee_in_team:
-                raise HTTPException(status_code=403, detail="Cannot assign lead outside your team")
-    else:
-        # Auto-assign to self if sales executive
-        if _user_role_str(current_user) == "sales":
-            assigned_to_id = current_user.id
-            
     # Team selection rules
     requested_team_id = getattr(lead_data, "team_id", None)
     team_id: Optional[int]
@@ -762,6 +738,19 @@ def create_lead(
             team_id = active_team_id
         else:
             team_id = active_team_id
+
+    # A rep's lead is always their own. Anyone else may pick an owner on the lead's team.
+    assigned_to_id = lead_data.assigned_to_id
+    if _user_role_str(current_user) == "sales":
+        if assigned_to_id and assigned_to_id != current_user.id:
+            raise HTTPException(status_code=403, detail="Sales executives cannot assign leads to others")
+        assigned_to_id = current_user.id
+    elif assigned_to_id:
+        assignee = ensure_assignable(db, current_user, assigned_to_id)
+        if team_id is None:
+            team_id = users_home_team(db, assignee)
+        elif not user_on_team(db, assignee, team_id):
+            raise HTTPException(status_code=403, detail="Cannot assign lead outside its team")
 
     normalized_email = normalize_email(lead_data.email)
     normalized_phone = normalize_phone(lead_data.phone)
@@ -824,7 +813,10 @@ def create_lead(
     db.flush()
     assign_lead_by_territory(db, new_lead)
     db.flush()
-    run_workflows(db, "lead_created", lead=new_lead)
+    # A lead with a team and no chosen owner is "Open to Anyone": it waits in the pool for a claim.
+    run_workflows(db, "lead_created", lead=new_lead, auto_assign=new_lead.team_id is None)
+    if assigned_to_id and assigned_to_id != current_user.id:
+        notify_lead_assigned(db, new_lead, assigned_to_id, f"{current_user.full_name} assigned you a new lead.")
     db.commit()
     db.refresh(new_lead)
     recompute_one(db, new_lead, "lead")
@@ -843,6 +835,8 @@ def create_lead(
         "company": new_lead.company,
         "status": new_lead.status,
         "source": new_lead.source,
+        "assigned_to_id": new_lead.assigned_to_id,
+        "team_id": new_lead.team_id,
         "created_at": new_lead.created_at.strftime("%Y-%m-%d") if new_lead.created_at else None
     }
 
@@ -934,29 +928,23 @@ def update_lead(
 
         # Managers cannot reassign converted leads. Unassigned team leads may be assigned from the pool.
         if _user_role_str(current_user) == "manager":
-            if _lead_status_value(lead) == LeadStatus.CONVERTED.value:
+            if lead_is_converted(lead):
                 raise HTTPException(status_code=403, detail="Cannot reassign a converted lead")
-            if lead.assigned_to_id and lead.created_by_id:
-                creator = db.query(User).filter(User.id == lead.created_by_id).first()
-                if creator and _user_role_str(creator) == "sales":
-                    raise HTTPException(status_code=403, detail="Cannot reassign a lead created by a sales executive")
+            if not manager_may_move_lead(db, lead):
+                raise HTTPException(status_code=403, detail="Cannot reassign a lead created by a sales executive")
 
-        assignee = apply_company_scope(
-            db.query(User), User, current_user
-        ).filter(User.id == lead_data.assigned_to_id).first()
-        if not assignee:
-            raise HTTPException(status_code=400, detail="User not found in this company")
+        assignee = ensure_assignable(db, current_user, lead_data.assigned_to_id)
         if _user_role_str(current_user) == "manager":
             if active_team_id is None:
                 raise HTTPException(status_code=400, detail="Active team required for manager actions")
-            assignee_in_team = apply_company_scope(db.query(TeamMembership), TeamMembership, current_user).filter(
-                TeamMembership.team_id == active_team_id,
-                TeamMembership.user_id == assignee.id,
-            ).first()
-            if not assignee_in_team:
+            if not user_on_team(db, assignee, active_team_id):
                 raise HTTPException(status_code=403, detail="Cannot assign lead outside your team")
-            
-        lead.assigned_to_id = lead_data.assigned_to_id
+
+        if lead_data.only_if_unassigned:
+            if not assign_open_lead(db, lead, assignee, current_user):
+                raise HTTPException(status_code=409, detail="This lead was already assigned to someone else")
+        else:
+            move_lead_to_owner(db, lead, assignee, current_user)
     
     # Log activity
     actions_logged = False
@@ -974,16 +962,6 @@ def update_lead(
         log_activity(db, user=current_user, action='reassigned', entity_type='lead',
                      entity_id=lead.id, entity_name=lead.name, before=old_name, after=new_name)
         actions_logged = True
-        
-        # Notify the new assignee
-        if lead_data.assigned_to_id:
-            assignee_role = _user_role_str(new_user) if new_user else "sales"
-            send_notification(db, lead_data.assigned_to_id,
-                title=f"Lead Assigned: {lead.name}",
-                message=f"{current_user.full_name} assigned you a new lead.",
-                type="info",
-                link=f"/{assignee_role}/leads/{lead.id}",
-                category="leads")
         
     if info_edited and not actions_logged:
         log_activity(db, user=current_user, action='updated', entity_type='lead',
@@ -1048,11 +1026,12 @@ def update_lead_status(
 
         # Notify the lead owner about the status change (if someone else changed it)
         if lead.assigned_to_id and lead.assigned_to_id != current_user.id:
+            owner = db.query(User).filter(User.id == lead.assigned_to_id).first()
             send_notification(db, lead.assigned_to_id,
                 title=f"Lead Status Changed: {lead.name}",
                 message=f"{old_status} → {status_data.status} (by {current_user.full_name})",
                 type="info",
-                link=f"/sales/leads/{lead.id}",
+                link=lead_page_path(owner, lead.id) if owner else None,
                 category="leads")
 
     if old_status != status_data.status:
@@ -1083,13 +1062,43 @@ def claim_lead(
             return {"message": "Lead already assigned to you", "lead_id": lead.id}
         raise HTTPException(status_code=400, detail="This lead is already assigned")
 
-    _sales_can_claim_lead(lead, current_user, active_team_id, db)
+    if not can_view_lead(lead, current_user, active_team_id, db):
+        raise HTTPException(status_code=403, detail="Lead does not belong to your team")
 
-    lead.assigned_to_id = current_user.id
+    if not claim_open_lead(db, lead, current_user):
+        raise HTTPException(status_code=400, detail="This lead is already assigned")
     log_activity(db, user=current_user, action='claimed', entity_type='lead',
                  entity_id=lead.id, entity_name=lead.name, after=current_user.full_name)
     db.commit()
     return {"message": f"Lead claimed successfully", "lead_id": lead.id}
+
+
+@router.post("/{lead_id:int}/release")
+def release_lead(
+    lead_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    active_team_id: Optional[int] = Depends(get_active_team_id),
+):
+    """Send a lead back to the pool, to undo a wrong claim."""
+    lead = apply_company_scope(db.query(Lead), Lead, current_user).filter(Lead.id == lead_id, Lead.deleted_at.is_(None)).first()
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    if _user_role_str(current_user) == "sales":
+        raise HTTPException(status_code=403, detail="Only a manager can send a lead back to the pool")
+    ensure_can_work_lead(lead, current_user, active_team_id, "You cannot change this lead")
+    if _user_role_str(current_user) == "manager" and not manager_may_move_lead(db, lead):
+        raise HTTPException(status_code=403, detail="Cannot move a lead created by a sales executive")
+    if lead.assigned_to_id is None:
+        raise HTTPException(status_code=400, detail="This lead is already in the pool")
+    if lead_is_converted(lead):
+        raise HTTPException(status_code=400, detail="A converted lead cannot go back to the pool")
+    previous = db.query(User).filter(User.id == lead.assigned_to_id).first()
+    return_lead_to_pool(db, lead, current_user)
+    log_activity(db, user=current_user, action='released', entity_type='lead',
+                 entity_id=lead.id, entity_name=lead.name, before=previous.full_name if previous else None)
+    db.commit()
+    return {"message": "Lead sent back to the pool", "lead_id": lead.id}
 
 
 @router.delete("/{lead_id:int}", response_model=MessageResponse)

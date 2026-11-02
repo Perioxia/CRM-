@@ -1,8 +1,8 @@
 """Who may see and work on a lead. Every route that touches a lead uses these rules.
 
 Sales see their own leads and unclaimed leads on their team, and work only on their own.
-Managers see and work on their active team. MD and admin see and work on the whole company.
-Purchase has no lead access.
+Managers see and work on their active team. MD and admin see and work on the whole company,
+including open leads with no team. Purchase has no lead access.
 """
 from typing import Optional
 
@@ -23,6 +23,11 @@ def user_role(user: User) -> str:
     return "" if role is None else str(getattr(role, "value", role))
 
 
+def lead_page_path(user: User, lead_id: int) -> str:
+    role = user_role(user)
+    return f"/{role if role in ('sales', 'manager', 'md') else 'md'}/leads/{lead_id}"
+
+
 def member_team_ids(db: Session, user: User) -> list[int]:
     rows = (
         apply_company_scope(db.query(TeamMembership.team_id), TeamMembership, user)
@@ -41,12 +46,10 @@ def scope_visible_leads(query: Query, db: Session, user: User, active_team_id: O
         return query.filter(false() if active_team_id is None else Lead.team_id == active_team_id)
     if role != "sales":
         return query
-    if active_team_id is not None:
-        open_on_team = or_(Lead.team_id == active_team_id, Lead.team_id.is_(None))
-    else:
-        teams = member_team_ids(db, user)
-        open_on_team = or_(Lead.team_id.in_(teams), Lead.team_id.is_(None)) if teams else Lead.team_id.is_(None)
-    return query.filter(or_(Lead.assigned_to_id == user.id, and_(Lead.assigned_to_id.is_(None), open_on_team)))
+    teams = [active_team_id] if active_team_id is not None else member_team_ids(db, user)
+    return query.filter(
+        or_(Lead.assigned_to_id == user.id, and_(Lead.assigned_to_id.is_(None), Lead.team_id.in_(teams)))
+    )
 
 
 def scope_workable_leads(query: Query, user: User, active_team_id: Optional[int]) -> Query:
@@ -71,10 +74,8 @@ def can_view_lead(lead: Lead, user: User, active_team_id: Optional[int], db: Ses
         return True
     if lead.assigned_to_id == user.id:
         return True
-    if lead.assigned_to_id is not None:
+    if lead.assigned_to_id is not None or lead.team_id is None:
         return False
-    if lead.team_id is None:
-        return True
     if active_team_id is not None:
         return lead.team_id == active_team_id
     return lead.team_id in member_team_ids(db, user)

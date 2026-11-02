@@ -14,7 +14,7 @@ from app.models.core.user import User
 from app.models.sales.lead import Lead
 from app.models.sales.client import Client
 from app.models.finance.invoice import Invoice
-from app.services.sales.lead_access import scope_visible_leads, user_role
+from app.services.sales.lead_access import lead_page_path, scope_visible_leads, user_role
 
 router = APIRouter()
 
@@ -30,7 +30,6 @@ def global_search(
     term = f"%{q}%"
     results = []
     role = user_role(current_user)
-    lead_home = role if role in ("sales", "manager", "md") else "md"
 
     # Search leads
     lead_q = apply_company_scope(db.query(Lead), Lead, current_user).filter(Lead.deleted_at.is_(None))
@@ -45,7 +44,7 @@ def global_search(
             "title": l.name,
             "subtitle": l.company or l.email or "",
             "status": l.status,
-            "url": f"/{lead_home}/leads/{l.id}"
+            "url": lead_page_path(current_user, l.id)
         })
 
     # Search clients

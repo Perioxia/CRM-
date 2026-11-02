@@ -2,6 +2,7 @@ from sqlalchemy.orm import Session
 
 from app.models.core.user import User
 from app.models.sales.lead import Lead
+from app.services.sales.lead_ownership import notify_lead_assigned
 from app.services.sales.territory import round_robin_sales_on_team, _user_id_with_lowest_load
 from app.models.sales.quote import Quote
 from app.models.sales.task import Task
@@ -25,7 +26,14 @@ def ensure_default_workflow_rules(db: Session, company_id: int) -> None:
     db.flush()
 
 
-def run_workflows(db: Session, trigger: str, *, lead: Lead | None = None, quote: Quote | None = None) -> None:
+def run_workflows(
+    db: Session,
+    trigger: str,
+    *,
+    lead: Lead | None = None,
+    quote: Quote | None = None,
+    auto_assign: bool = True,
+) -> None:
     company_id = None
     if lead is not None:
         company_id = lead.company_id
@@ -46,7 +54,8 @@ def run_workflows(db: Session, trigger: str, *, lead: Lead | None = None, quote:
     )
     for rule in rules:
         if rule.action == "assign_round_robin" and lead is not None:
-            _assign_round_robin(db, lead)
+            if auto_assign:
+                _assign_round_robin(db, lead)
         elif rule.action == "create_task" and lead is not None:
             _create_follow_up_task(db, lead)
         elif rule.action == "notify":
@@ -71,6 +80,7 @@ def _assign_round_robin(db: Session, lead: Lead) -> None:
         user_id = _user_id_with_lowest_load(db, lead.company_id, candidates)
     if user_id is not None:
         lead.assigned_to_id = user_id
+        notify_lead_assigned(db, lead, user_id, "A new lead was assigned to you.")
 
 
 def _create_follow_up_task(db: Session, lead: Lead) -> None:
