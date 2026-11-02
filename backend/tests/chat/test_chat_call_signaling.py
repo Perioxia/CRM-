@@ -15,7 +15,7 @@ from app.models.core.chat import ChatCall, ChatMessage
 from app.routers.chat import rest as rest_module
 from app.services.chat import call_live
 from app.services.chat.realtime import hub
-from tests.chat.conftest import ORIGIN, As
+from tests.chat.conftest import ORIGIN, As, change_user
 
 WS = "/api/chat/ws"
 FAKE_SDP = "v=0 o=- 4611731400430051336 2 IN IP4 127.0.0.1 PRIVATE-SDP-MARKER"
@@ -424,24 +424,25 @@ def test_login_expiring_mid_call_keeps_the_call_until_it_ends(calls_on, db, monk
     callee.close()
 
 
-def test_logout_still_disconnects_a_call_past_login_expiry(calls_on, db, monkeypatch):
-    from app.models.core.user import User
+def test_logout_still_disconnects_a_call_past_login_expiry(calls_on, monkeypatch):
     from app.routers.chat import ws as ws_module
 
     monkeypatch.setattr(ws_module, "PING_SECONDS", 0.1)
     monkeypatch.setattr(ws_module, "RECHECK_SECONDS", 0.2)
     conv_id = _conv(calls_on)
-    caller = Tab(As("sales@a.test"), ticket=_ticket_expiring_in(calls_on, "sales", 1))
-    callee = Tab(As("md@a.test"))
+    sales, md = As("sales@a.test"), As("md@a.test")
+    caller = Tab(sales, ticket=_ticket_expiring_in(calls_on, "sales", 3))
+    callee = Tab(md)
     call_id = _ring(caller, [callee], conv_id)
     _answer(caller, callee, call_id)
-    assert "call.ended" not in _frame_types_for(callee, 2)
+    assert "call.ended" not in _frame_types_for(callee, 4)
 
-    user = db.query(User).filter(User.id == calls_on["users"]["sales"].id).first()
-    user.token_version = int(user.token_version or 0) + 1
-    db.commit()
+    change_user(calls_on["users"]["sales"].id, token_version=99)
     _expect_close(caller, ws_module.CLOSE_FORBIDDEN)
     assert callee.next("call.ended")["status"] == "completed"
+    # The server closes this one too, so nothing is still on the shared test database when the test ends.
+    change_user(calls_on["users"]["md"].id, token_version=99)
+    _expect_close(callee, ws_module.CLOSE_FORBIDDEN)
     caller.close()
     callee.close()
 

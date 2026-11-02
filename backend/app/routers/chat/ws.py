@@ -13,17 +13,14 @@ from collections import deque
 
 import anyio
 
-from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
-from starlette.concurrency import run_in_threadpool
 
 from app.config import parse_origins, settings
-from app.database import get_db
 from app.services.chat import call_live, service
 from app.services.chat.crypto import chat_crypto_configured
 from app.services.chat.realtime import Connection, RealtimeUnavailable, hub
-from app.tenancy import bind_tenant, reset_tenant
 
 logger = logging.getLogger("app.chat.ws")
 router = APIRouter()
@@ -53,16 +50,14 @@ def allowed_origins() -> set[str]:
     return set(parse_origins(settings.CHAT_WS_ALLOWED_ORIGINS or settings.CORS_ORIGINS, production))
 
 
+# A socket's tasks reach the database at the same moment and a Session can't be shared between
+# threads, so these run through call_live.in_own_session: one short session per step.
 def _load_account(db: Session, user_id: int, token_version: int):
-    try:
-        user = service.account_is_usable(db, user_id, token_version)
-        return (user.id, user.company_id) if user is not None else None
-    finally:
-        db.rollback()  # end the transaction so the pooled connection is released
+    user = service.account_is_usable(db, user_id, token_version)
+    return (user.id, user.company_id) if user is not None else None
 
 
-def _participants(db: Session, user_id: int, company_id: int, conversation_id: int) -> list[int]:
-    bind_tenant(company_id=company_id, db=db)
+def _participants(db: Session, user_id: int, conversation_id: int) -> list[int]:
     try:
         me = service.account_is_usable(db, user_id)
         if me is None:
@@ -70,13 +65,10 @@ def _participants(db: Session, user_id: int, company_id: int, conversation_id: i
         return service.participant_user_ids(db, me, conversation_id)
     except HTTPException:
         return []
-    finally:
-        db.rollback()  # end the transaction so the pooled connection is released
-        reset_tenant()
 
 
 @router.websocket("/ws")
-async def chat_ws(websocket: WebSocket, db: Session = Depends(get_db)):
+async def chat_ws(websocket: WebSocket):
     if not settings.CHAT_ENABLED or not chat_crypto_configured():
         await websocket.close(code=CLOSE_UNAVAILABLE)
         return
@@ -108,7 +100,9 @@ async def chat_ws(websocket: WebSocket, db: Session = Depends(get_db)):
     if not ticket or int(ticket.get("exp", 0)) <= time.time():
         await websocket.close(code=CLOSE_UNAUTHORIZED)
         return
-    account = await run_in_threadpool(_load_account, db, int(ticket["user_id"]), int(ticket["token_version"]))
+    account = await call_live.in_own_session(
+        ticket.get("company_id"), _load_account, int(ticket["user_id"]), int(ticket["token_version"])
+    )
     if account is None or account[1] != ticket.get("company_id"):
         await websocket.close(code=CLOSE_FORBIDDEN)
         return
@@ -233,7 +227,7 @@ async def chat_ws(websocket: WebSocket, db: Session = Depends(get_db)):
             last_typing[conv_id] = now
             cached = allowed_conversations.get(conv_id)
             if cached is None or cached[0] < now:
-                ids = await run_in_threadpool(_participants, db, user_id, company_id, conv_id)
+                ids = await call_live.in_own_session(company_id, _participants, user_id, conv_id)
                 cached = (now + PARTICIPANT_CACHE_SECONDS, ids)
                 allowed_conversations[conv_id] = cached
             recipients = [uid for uid in cached[1] if uid != user_id]
@@ -271,7 +265,7 @@ async def chat_ws(websocket: WebSocket, db: Session = Depends(get_db)):
                     pass
             if time.monotonic() >= next_recheck:
                 next_recheck = time.monotonic() + RECHECK_SECONDS
-                if await run_in_threadpool(_load_account, db, user_id, token_version) is None:
+                if await call_live.in_own_session(company_id, _load_account, user_id, token_version) is None:
                     close_code["value"] = CLOSE_FORBIDDEN
                     return
                 allowed_conversations.clear()

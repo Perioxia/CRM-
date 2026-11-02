@@ -6,6 +6,8 @@ from fastapi.testclient import TestClient
 
 from app.config import settings
 from app.main import app
+from app.models.core.user import User
+from app.services.chat import call_live
 from app.services.chat.realtime import hub
 from app.utils.rate_limit import auth_limiter
 from tests.helpers.auth import create_active_user
@@ -26,17 +28,15 @@ def _reset_hub() -> None:
 
 @pytest.fixture(autouse=True)
 def _call_db_work_takes_turns(monkeypatch):
-    """Call code opens its own sessions on the in-memory test database (tests/conftest.py).
+    """Call and socket code open their own sessions on the in-memory test database (tests/conftest.py).
 
     That database is one SQLite connection shared by every thread (StaticPool), which crashes
     when two threads use it at once — e.g. both sides hanging up at the same moment. In
     production each session has its own Postgres connection and the call row lock decides the
-    winner (covered by tests/chat/test_chat_postgres.py). Here the call code's database work
-    takes turns, like a database serializing two writers on the same row.
+    winner (covered by tests/chat/test_chat_postgres.py). Here that database work takes turns,
+    like a database serializing two writers on the same row.
     """
     import threading
-
-    from app.services.chat import call_live
 
     real_run = call_live._run
     one_at_a_time = threading.Lock()
@@ -69,6 +69,15 @@ def token_for(client: TestClient, email: str, password: str = "pw") -> str:
     )
     assert res.status_code == 200, res.text
     return res.json()["access_token"]
+
+
+def change_user(user_id: int, **fields) -> None:
+    """Change a user while sockets are open, taking turns with their database work."""
+    def _apply(session):
+        session.query(User).filter(User.id == user_id).update(fields)
+        session.commit()
+
+    call_live._run(None, _apply)
 
 
 class As:

@@ -218,13 +218,15 @@ def test_tenant_context_propagates_into_threadpool_calls():
     assert current_company_id() is None
 
 
-def test_ws_account_check_releases_the_connection(pg):
+def test_ws_account_check_releases_the_connection(pg, monkeypatch):
     from app.routers.chat.ws import _load_account
+    from app.services.chat import call_live
 
-    _, Session, ids = pg
-    with Session() as db:
-        assert _load_account(db, ids["users"][0], 0) is not None
-        assert not db.in_transaction()
+    engine, Session, ids = pg
+    monkeypatch.setattr(call_live, "SessionFactory", Session)
+    check = call_live.in_own_session(ids["companies"][0], _load_account, ids["users"][0], 0)
+    assert asyncio.run(check) is not None
+    assert engine.pool.checkedout() == 0
 
 
 def test_concurrent_uploads_cannot_exceed_the_storage_quota(pg, tmp_path, monkeypatch):
