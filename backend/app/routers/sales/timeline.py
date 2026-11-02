@@ -33,6 +33,8 @@ def get_timeline(
 ):
     if entity_type == "lead":
         lead = require_timeline_parent(db, current_user, "lead", entity_id)
+        if lead.deleted_at is not None:
+            raise HTTPException(status_code=404, detail="Not found")
         ensure_can_view_lead(lead, current_user, active_team_id, db)
     if entity_type in _FEED:
         return build_activity_feed(db, current_user, entity_type, entity_id, skip, limit)

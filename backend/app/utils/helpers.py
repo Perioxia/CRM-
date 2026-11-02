@@ -24,6 +24,22 @@ def normalize_phone(value: Optional[str]) -> Optional[str]:
     digits = _NON_DIGIT_RE.sub("", value)
     return digits if digits else None
 
+def phone_variants(value: Optional[str]) -> set[str]:
+    """Every way the same number may be stored. Only Indian numbers have more than one."""
+    digits = normalize_phone(value)
+    if not digits:
+        return set()
+    if len(digits) == 10:
+        local = digits
+    elif len(digits) == 11 and digits.startswith("0"):
+        local = digits[1:]
+    elif len(digits) == 12 and digits.startswith("91"):
+        local = digits[2:]
+    else:
+        return {digits}
+    return {local, f"0{local}", f"91{local}"}
+
+
 def generate_company_code(db: Session, length: int = 3) -> str:
     """Generate a unique alphanumeric code for a company."""
     chars = string.ascii_uppercase + string.digits

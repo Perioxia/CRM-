@@ -932,7 +932,7 @@ def _revenue_summary(db: Session, current_user: User, period: str, year: int, mo
 
 
 def _business_snapshot(db: Session, current_user: User) -> dict:
-    lead_q = apply_company_scope(db.query(Lead), Lead, current_user)
+    lead_q = apply_company_scope(db.query(Lead), Lead, current_user).filter(Lead.deleted_at.is_(None))
     inv_q = apply_company_scope(db.query(Invoice), Invoice, current_user)
     task_q = apply_company_scope(db.query(Task), Task, current_user)
 
@@ -992,7 +992,7 @@ def _monthly_best_sales_exec(db: Session, current_user: User, year: int, month: 
     ).group_by(Invoice.created_by_id)
     revenue_map = {uid: float(total or 0) for uid, total in inv_q.all()}
 
-    conv_q = apply_company_scope(db.query(Lead.assigned_to_id, func.count(Lead.id)), Lead, current_user)
+    conv_q = apply_company_scope(db.query(Lead.assigned_to_id, func.count(Lead.id)), Lead, current_user).filter(Lead.deleted_at.is_(None))
     conv_q = conv_q.filter(
         Lead.assigned_to_id.in_(sales_ids),
         Lead.status == "Converted",
@@ -1052,7 +1052,7 @@ def _team_performance_summary(db: Session, current_user: User, period: str) -> d
     else:
         start_date = now - timedelta(days=30)
         
-    conv_q = apply_company_scope(db.query(Lead.assigned_to_id, func.count(Lead.id)), Lead, current_user).filter(
+    conv_q = apply_company_scope(db.query(Lead.assigned_to_id, func.count(Lead.id)), Lead, current_user).filter(Lead.deleted_at.is_(None)).filter(
         Lead.assigned_to_id.in_(member_ids),
         Lead.status == "Converted",
         Lead.converted_at >= start_date
@@ -1191,7 +1191,7 @@ def _create_top_performing_team(db: Session, current_user: User, name: str, size
     ).group_by(Invoice.created_by_id)
     revenue_map = {uid: float(total or 0) for uid, total in inv_q.all()}
     
-    conv_q = apply_company_scope(db.query(Lead.assigned_to_id, func.count(Lead.id)), Lead, current_user).filter(
+    conv_q = apply_company_scope(db.query(Lead.assigned_to_id, func.count(Lead.id)), Lead, current_user).filter(Lead.deleted_at.is_(None)).filter(
         Lead.assigned_to_id.in_(sales_ids),
         Lead.status == "Converted",
         Lead.converted_at >= start_date

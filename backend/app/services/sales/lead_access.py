@@ -15,6 +15,7 @@ from app.models.core.user import User
 from app.models.sales.client import Client
 from app.models.sales.deal import Deal
 from app.models.sales.lead import Lead
+from app.services.sales.recycle import hide_deleted_lead_rows
 from app.utils.dependencies import apply_company_scope
 
 
@@ -66,7 +67,7 @@ def scope_workable_leads(query: Query, user: User, active_team_id: Optional[int]
 
 def can_view_lead(lead: Lead, user: User, active_team_id: Optional[int], db: Session) -> bool:
     role = user_role(user)
-    if role == "purchase":
+    if role == "purchase" or lead.deleted_at is not None:
         return False
     if role == "manager":
         return active_team_id is not None and lead.team_id == active_team_id
@@ -111,6 +112,8 @@ def ensure_can_work_lead(
 ) -> None:
     if not can_work_lead(lead, user, active_team_id):
         raise HTTPException(status_code=403, detail=detail)
+    if lead.deleted_at is not None:
+        raise HTTPException(status_code=400, detail="This lead is in the trash")
 
 
 def ensure_can_work_lead_id(
@@ -154,6 +157,7 @@ def scope_activity_rows(
     active_team_id: Optional[int],
 ) -> Query:
     """Limit emails, calls or WhatsApp messages to the ones this user wrote or whose lead, client or deal they hold."""
+    query = hide_deleted_lead_rows(query, model.lead_id)
     role = user_role(user)
     if role == "purchase":
         return query.filter(false())

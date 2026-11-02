@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 import calendar
 
 from app.database import get_db
+from app.services.sales.recycle import hide_deleted_lead_rows
 from app.utils.dependencies import get_current_user, apply_company_scope, ensure_company_access, is_platform_admin, get_active_team_id
 from app.models.core.user import User
 from app.models.sales.lead import Lead
@@ -59,7 +60,7 @@ def get_md_dashboard(
     active_team_id: Optional[int] = Depends(get_active_team_id)
 ):
     """Integrated MD Executive Dashboard"""
-    lead_q = apply_company_scope(db.query(Lead), Lead, current_user)
+    lead_q = apply_company_scope(db.query(Lead), Lead, current_user).filter(Lead.deleted_at.is_(None))
     inv_q = apply_company_scope(db.query(Invoice), Invoice, current_user)
     client_q = apply_company_scope(db.query(Client), Client, current_user)
 
@@ -101,7 +102,7 @@ def get_md_dashboard(
     prev_leads = lead_q.filter(Lead.created_at >= d14_ago, Lead.created_at < d7_ago).count()
     lead_velocity = int(((recent_leads - prev_leads) / max(prev_leads, 1)) * 100)
     
-    task_q = apply_company_scope(db.query(Task), Task, current_user)
+    task_q = hide_deleted_lead_rows(apply_company_scope(db.query(Task), Task, current_user), Task.lead_id)
     if active_team_id is not None:
         # Task has no team_id. Scope via the linked Lead/Client team.
         task_q = task_q.outerjoin(Lead, Task.lead_id == Lead.id).outerjoin(Client, Task.client_id == Client.id)
@@ -312,7 +313,7 @@ def get_company_sales(
     current_user: User = Depends(require_md)
 ):
     """Get company-wide sales analytics"""
-    lead_q = apply_company_scope(db.query(Lead), Lead, current_user)
+    lead_q = apply_company_scope(db.query(Lead), Lead, current_user).filter(Lead.deleted_at.is_(None))
     total = lead_q.count()
     won_leads = lead_q.filter(Lead.status == "Converted").count()
     lost_leads = lead_q.filter(Lead.status == "Lost").count()
@@ -411,7 +412,7 @@ def get_company_leads(
     current_user: User = Depends(require_md)
 ):
     """Get all company leads with filters (paginated)."""
-    query = apply_company_scope(db.query(Lead), Lead, current_user)
+    query = apply_company_scope(db.query(Lead), Lead, current_user).filter(Lead.deleted_at.is_(None))
     
     if status:
         query = query.filter(Lead.status == status)
@@ -440,21 +441,21 @@ def get_company_leads(
         "skip": skip,
         "limit": limit,
         "funnel": [
-            {"name": "New", "value": apply_company_scope(db.query(Lead), Lead, current_user).filter(Lead.status == "New").count()},
-            {"name": "Contacted", "value": apply_company_scope(db.query(Lead), Lead, current_user).filter(Lead.status == "Contacted").count()},
-            {"name": "Qualified", "value": apply_company_scope(db.query(Lead), Lead, current_user).filter(Lead.status == "Qualified").count()},
-            {"name": "Proposal", "value": apply_company_scope(db.query(Lead), Lead, current_user).filter(Lead.status == "Proposal").count()},
-            {"name": "Converted", "value": apply_company_scope(db.query(Lead), Lead, current_user).filter(Lead.status == "Converted").count()},
+            {"name": "New", "value": apply_company_scope(db.query(Lead), Lead, current_user).filter(Lead.deleted_at.is_(None)).filter(Lead.status == "New").count()},
+            {"name": "Contacted", "value": apply_company_scope(db.query(Lead), Lead, current_user).filter(Lead.deleted_at.is_(None)).filter(Lead.status == "Contacted").count()},
+            {"name": "Qualified", "value": apply_company_scope(db.query(Lead), Lead, current_user).filter(Lead.deleted_at.is_(None)).filter(Lead.status == "Qualified").count()},
+            {"name": "Proposal", "value": apply_company_scope(db.query(Lead), Lead, current_user).filter(Lead.deleted_at.is_(None)).filter(Lead.status == "Proposal").count()},
+            {"name": "Converted", "value": apply_company_scope(db.query(Lead), Lead, current_user).filter(Lead.deleted_at.is_(None)).filter(Lead.status == "Converted").count()},
         ],
         "sourceBreakdown": [
             {"name": src or "Unknown", "value": cnt, "color": color}
             for (src, cnt), color in zip(
-                db.query(Lead.source, func.count(Lead.id)).filter(Lead.company_id == current_user.company_id).group_by(Lead.source).all() if current_user.company_id
-                else db.query(Lead.source, func.count(Lead.id)).group_by(Lead.source).all(),
+                db.query(Lead.source, func.count(Lead.id)).filter(Lead.company_id == current_user.company_id, Lead.deleted_at.is_(None)).group_by(Lead.source).all() if current_user.company_id
+                else db.query(Lead.source, func.count(Lead.id)).filter(Lead.deleted_at.is_(None)).group_by(Lead.source).all(),
                 ["var(--accent)", "var(--success)", "var(--warning)", "var(--error)", "var(--secondary)"]
             )
         ],
-        "conversionRate": int((apply_company_scope(db.query(Lead), Lead, current_user).filter(Lead.status == "Converted").count() / max(total, 1)) * 100)
+        "conversionRate": int((apply_company_scope(db.query(Lead), Lead, current_user).filter(Lead.deleted_at.is_(None)).filter(Lead.status == "Converted").count() / max(total, 1)) * 100)
     }
 
 
@@ -588,7 +589,7 @@ def get_employee_detail(
     formatted_id = f"{prefix}{company_rank:03d}"
     
     # Performance metrics (company-scoped)
-    lead_q = apply_company_scope(db.query(Lead), Lead, current_user)
+    lead_q = apply_company_scope(db.query(Lead), Lead, current_user).filter(Lead.deleted_at.is_(None))
     leads = lead_q.filter(Lead.assigned_to_id == user_id).count()
     converted = lead_q.filter(Lead.assigned_to_id == user_id, Lead.status == "Converted").count()
     
@@ -655,7 +656,7 @@ def get_company_monitoring(
     # Get team status (company-scoped)
     teams = apply_company_scope(db.query(Team), Team, current_user).all()
     team_status = []
-    lead_q = apply_company_scope(db.query(Lead), Lead, current_user)
+    lead_q = apply_company_scope(db.query(Lead), Lead, current_user).filter(Lead.deleted_at.is_(None))
     for team in teams:
         team_leads = lead_q.filter(Lead.team_id == team.id, Lead.company_id == current_user.company_id).count()
         team_status.append({
@@ -668,7 +669,7 @@ def get_company_monitoring(
     ai_interpretation = []
     
     # 1. Overdue tasks
-    overdue_tasks = apply_company_scope(db.query(Task), Task, current_user).filter(
+    overdue_tasks = hide_deleted_lead_rows(apply_company_scope(db.query(Task), Task, current_user), Task.lead_id).filter(
         Task.due_date.isnot(None),
         Task.due_date < now_utc_naive,
         Task.status != "Completed"
@@ -711,7 +712,7 @@ def get_company_monitoring(
         checkpoint_date = checkpoint_dt.date()
         stall_cutoff = checkpoint_dt - timedelta(days=14)
 
-        overdue_tasks_day = apply_company_scope(db.query(Task), Task, current_user).filter(
+        overdue_tasks_day = hide_deleted_lead_rows(apply_company_scope(db.query(Task), Task, current_user), Task.lead_id).filter(
             Task.due_date.isnot(None),
             Task.due_date < checkpoint_dt,
             Task.status != "Completed",
@@ -822,7 +823,7 @@ def get_performance_points(
     current_user: User = Depends(require_md)
 ):
     """Get employee performance points based on lead performance."""
-    lead_q = apply_company_scope(db.query(Lead), Lead, current_user)
+    lead_q = apply_company_scope(db.query(Lead), Lead, current_user).filter(Lead.deleted_at.is_(None))
     user_q = apply_company_scope(db.query(User), User, current_user)
 
     sales_users = user_q.filter(User.role.in_(list(POINT_ELIGIBLE_ROLES))).all()
@@ -920,7 +921,7 @@ def get_monthly_performance(
     revenue_map = {uid: float(total or 0) for uid, total in revenue_rows}
 
     # Conversions: leads assigned to the user, converted, converted_at in month.
-    lead_q = apply_company_scope(db.query(Lead.assigned_to_id, func.count(Lead.id)), Lead, current_user)
+    lead_q = apply_company_scope(db.query(Lead.assigned_to_id, func.count(Lead.id)), Lead, current_user).filter(Lead.deleted_at.is_(None))
     lead_q = lead_q.filter(
         Lead.assigned_to_id.in_(sales_ids),
         Lead.status == "Converted",
@@ -932,7 +933,7 @@ def get_monthly_performance(
     conv_map = {uid: int(cnt or 0) for uid, cnt in conv_rows}
 
     # Total leads created in month
-    total_leads_q = apply_company_scope(db.query(Lead.assigned_to_id, func.count(Lead.id)), Lead, current_user)
+    total_leads_q = apply_company_scope(db.query(Lead.assigned_to_id, func.count(Lead.id)), Lead, current_user).filter(Lead.deleted_at.is_(None))
     total_leads_q = total_leads_q.filter(
         Lead.assigned_to_id.in_(sales_ids),
         Lead.created_at >= start,
@@ -992,8 +993,8 @@ def get_md_teams(
         )
         member_ids = [m.id for m in members]
 
-        lead_count = apply_company_scope(db.query(Lead), Lead, current_user).filter(Lead.assigned_to_id.in_(member_ids)).count() if member_ids else 0
-        converted = apply_company_scope(db.query(Lead), Lead, current_user).filter(Lead.assigned_to_id.in_(member_ids), Lead.status == "Converted").count() if member_ids else 0
+        lead_count = apply_company_scope(db.query(Lead), Lead, current_user).filter(Lead.deleted_at.is_(None)).filter(Lead.assigned_to_id.in_(member_ids)).count() if member_ids else 0
+        converted = apply_company_scope(db.query(Lead), Lead, current_user).filter(Lead.deleted_at.is_(None)).filter(Lead.assigned_to_id.in_(member_ids), Lead.status == "Converted").count() if member_ids else 0
         revenue = apply_company_scope(db.query(func.sum(Invoice.total)), Invoice, current_user).filter(Invoice.created_by_id.in_(member_ids), Invoice.status == "Paid").scalar() or 0 if member_ids else 0
         order_count = apply_company_scope(db.query(Invoice), Invoice, current_user).filter(Invoice.created_by_id.in_(member_ids)).count() if member_ids else 0
 

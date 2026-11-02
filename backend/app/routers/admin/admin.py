@@ -322,7 +322,7 @@ def disable_user(
     ).count()
     
     # Check for assigned leads (company-scoped)
-    lead_q = apply_company_scope(db.query(Lead), Lead, current_user)
+    lead_q = apply_company_scope(db.query(Lead), Lead, current_user).filter(Lead.deleted_at.is_(None))
     assigned_leads = lead_q.filter(
         Lead.assigned_to_id == user_id
     ).count()
@@ -366,7 +366,7 @@ def delete_user(
         Task.status != "Completed"
     ).count()
     
-    lead_q = apply_company_scope(db.query(Lead), Lead, current_user)
+    lead_q = apply_company_scope(db.query(Lead), Lead, current_user).filter(Lead.deleted_at.is_(None))
     assigned_leads = lead_q.filter(
         Lead.assigned_to_id == user_id
     ).count()

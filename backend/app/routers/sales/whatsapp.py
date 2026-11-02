@@ -24,6 +24,7 @@ from app.services.sales.whatsapp import (
     session_open_until,
 )
 from app.services.sales.lead_access import ensure_can_work_lead, scope_activity_list
+from app.services.sales.recycle import hide_deleted_lead_rows
 from app.utils.datetime_json import isoformat_utc
 from app.utils.dependencies import (
     apply_company_scope,
@@ -169,6 +170,7 @@ def _scoped_threads_query(db: Session, current_user: User, active_team_id: Optio
         .outerjoin(Client, WhatsAppMessage.client_id == Client.id)
         .filter(WhatsAppMessage.id.in_(_latest_thread_ids(db, current_user)))
     )
+    query = hide_deleted_lead_rows(query, WhatsAppMessage.lead_id)
     if role == "sales":
         return query.filter(
             or_(
