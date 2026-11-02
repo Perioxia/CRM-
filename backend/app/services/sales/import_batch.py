@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
+from app.models.core.enums import LeadStatus
 from app.models.finance.invoice import Invoice
 from app.models.sales.client import Client
 from app.models.sales.deal import Deal
@@ -36,16 +37,15 @@ def record_batch(
     return batch
 
 
-def last_batch(db: Session, company_id: int) -> ImportBatch | None:
-    return (
-        db.query(ImportBatch)
-        .filter(
-            ImportBatch.company_id == company_id,
-            ImportBatch.undone_at.is_(None),
-        )
-        .order_by(ImportBatch.created_at.desc(), ImportBatch.id.desc())
-        .first()
+def last_batch(db: Session, company_id: int, created_by_ids: list[int] | None = None) -> ImportBatch | None:
+    """Newest batch not yet undone. created_by_ids limits it to those importers; None means anyone."""
+    query = db.query(ImportBatch).filter(
+        ImportBatch.company_id == company_id,
+        ImportBatch.undone_at.is_(None),
     )
+    if created_by_ids is not None:
+        query = query.filter(ImportBatch.created_by_id.in_(created_by_ids))
+    return query.order_by(ImportBatch.created_at.desc(), ImportBatch.id.desc()).first()
 
 
 def serialize_batch(batch: ImportBatch | None) -> dict | None:
@@ -81,8 +81,16 @@ def _deal_in_use(db: Session, deal_id: int) -> bool:
     return False
 
 
-def undo_last_batch(db: Session, company_id: int) -> dict:
-    batch = last_batch(db, company_id)
+def _lead_was_taken_over(lead: Lead, batch: ImportBatch) -> bool:
+    """Someone else now holds this lead, or it became a client: undo must not delete their work."""
+    status = getattr(lead.status, "value", lead.status)
+    if status == LeadStatus.CONVERTED.value:
+        return True
+    return lead.assigned_to_id is not None and lead.assigned_to_id != batch.created_by_id
+
+
+def undo_last_batch(db: Session, company_id: int, created_by_ids: list[int] | None = None) -> dict:
+    batch = last_batch(db, company_id, created_by_ids)
     if batch is None:
         raise ValueError("No import batch to undo")
 
@@ -96,7 +104,7 @@ def undo_last_batch(db: Session, company_id: int) -> dict:
                 Lead.id == item.entity_id,
                 Lead.company_id == company_id,
             ).first()
-            if lead is None or lead.deleted_at is not None:
+            if lead is None or lead.deleted_at is not None or _lead_was_taken_over(lead, batch):
                 skipped += 1
                 continue
             lead.deleted_at = now

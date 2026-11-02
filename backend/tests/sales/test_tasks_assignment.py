@@ -154,7 +154,7 @@ def test_manager_can_assign_only_within_own_team(client, db):
             TeamMembership(company_id=company.id, team_id=team_b.id, user_id=sales_b.id),
         ]
     )
-    lead = Lead(name="Manager Assign Lead", company_id=company.id, status="New")
+    lead = Lead(name="Manager Assign Lead", company_id=company.id, status="New", team_id=team_a.id)
     db.add(lead)
     db.commit()
     db.refresh(lead)

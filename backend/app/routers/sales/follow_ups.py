@@ -6,6 +6,7 @@ from typing import Optional, List
 from datetime import datetime, date, timedelta, timezone
 
 from app.database import get_db
+from app.services.sales.lead_access import ensure_can_work_lead
 from app.utils.dependencies import get_current_user, apply_company_scope, ensure_company_access, get_active_team_id
 from app.models.core.user import User
 from app.models.core.team_membership import TeamMembership
@@ -33,6 +34,8 @@ def _role_scoped_lead_ids(db: Session, current_user: User, active_team_id: Optio
         if active_team_id is None:
             return []
         return [row.id for row in query.filter(Lead.team_id == active_team_id).all()]
+    if current_user.role == "purchase":
+        return []
     return None
 
 
@@ -241,15 +244,9 @@ def create_follow_up(
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
 
-    # Role-based scoping
-    if current_user.role == "sales":
-        if lead.assigned_to_id != current_user.id:
-            raise HTTPException(status_code=403, detail="You can only create follow-ups for your own leads")
-        if active_team_id is not None and lead.team_id != active_team_id:
-            raise HTTPException(status_code=403, detail="You can only create follow-ups in your active team")
-    elif current_user.role == "manager":
-        if active_team_id is None or lead.team_id != active_team_id:
-            raise HTTPException(status_code=403, detail="You can only create follow-ups for leads in your team")
+    ensure_can_work_lead(lead, current_user, active_team_id, "You cannot create follow-ups for this lead")
+    if current_user.role == "sales" and active_team_id is not None and lead.team_id != active_team_id:
+        raise HTTPException(status_code=403, detail="You can only create follow-ups in your active team")
     
     new_fu = FollowUp(
         company_id=lead.company_id,

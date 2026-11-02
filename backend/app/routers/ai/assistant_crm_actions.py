@@ -58,6 +58,8 @@ def _lead_access_ok_ctx(
 ) -> tuple[bool, str | None]:
     role = _ai_role(user)
     ctx_team = _ctx_team_id(context)
+    if role == "purchase":
+        return False, "Purchase users have no access to leads."
     if role == "sales" and lead.assigned_to_id != user.id:
         return False, "You can only access leads assigned to you."
     if role == "manager" and manager_needs_team:
@@ -95,6 +97,8 @@ def ai_list_company_users(db: Session, user: User, role_filter: str | None) -> d
 def ai_list_leads(db: Session, user: User, limit: int, status_filter: str | None, context: dict | None) -> dict[str, Any]:
     role = _ai_role(user)
     ctx_team = _ctx_team_id(context)
+    if role == "purchase":
+        return {"leads": []}
     q = apply_company_scope(db.query(Lead), Lead, user)
     if role == "sales":
         q = q.filter(Lead.assigned_to_id == user.id)

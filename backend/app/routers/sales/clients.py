@@ -15,6 +15,7 @@ from app.models.finance.invoice import Invoice
 from app.models.sales.note import Note
 from app.models.sales.task import Task
 from app.services.sales.custom_fields import get_values_map, set_values
+from app.services.sales.lead_access import ensure_can_work_lead
 from app.models.sales.audit import AuditLog
 from app.models.sales.lead import Lead
 from app.schemas.sales import ClientCreate, ClientUpdate, ClientListResponse
@@ -231,6 +232,12 @@ def create_client(
     
     # Prevent duplicate conversion from same lead
     if body.converted_from_lead_id:
+        source_lead = apply_company_scope(db.query(Lead), Lead, current_user).filter(
+            Lead.id == body.converted_from_lead_id
+        ).first()
+        if source_lead is None:
+            raise HTTPException(status_code=400, detail="converted_from_lead_id not found in your company")
+        ensure_can_work_lead(source_lead, current_user, active_team_id)
         existing = apply_company_scope(
             db.query(Client), Client, current_user
         ).filter(

@@ -11,7 +11,8 @@ import io
 from datetime import datetime
 
 from app.database import get_db
-from app.utils.dependencies import get_current_user, apply_company_scope
+from app.utils.dependencies import get_current_user, apply_company_scope, get_active_team_id
+from app.services.sales.lead_access import scope_visible_leads
 from app.models.core.user import User
 from app.models.sales.lead import Lead
 from app.models.sales.client import Client
@@ -48,10 +49,12 @@ def build_csv_string(rows: list, headers: list) -> str:
 def export_leads(
     status: Optional[str] = Query(None),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    active_team_id: Optional[int] = Depends(get_active_team_id),
 ):
     """Export leads as CSV"""
-    query = apply_company_scope(db.query(Lead), Lead, current_user)
+    query = apply_company_scope(db.query(Lead), Lead, current_user).filter(Lead.deleted_at.is_(None))
+    query = scope_visible_leads(query, db, current_user, active_team_id)
     if status:
         query = query.filter(Lead.status == status)
     leads = query.order_by(Lead.created_at.desc()).all()
