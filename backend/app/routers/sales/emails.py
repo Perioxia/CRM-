@@ -12,7 +12,12 @@ from app.models.sales.email_log import EmailLog
 from app.models.sales.lead import Lead
 from app.services.sales.crm_email import deliver_and_log, serialize_email
 from app.services.sales.mailbox import get_user_mailbox, maybe_autosync
-from app.services.sales.lead_access import ensure_can_work_lead, scope_activity_list, scope_activity_rows
+from app.services.sales.lead_access import (
+    ensure_can_work_lead,
+    ensure_can_work_lead_id,
+    scope_activity_list,
+    scope_activity_rows,
+)
 from app.utils.dependencies import apply_company_scope, ensure_company_access, get_active_team_id, get_current_user
 
 router = APIRouter()
@@ -72,6 +77,7 @@ def create_email(
         deal = apply_company_scope(db.query(Deal), Deal, current_user).filter(Deal.id == payload.deal_id).first()
         if deal is None:
             raise HTTPException(status_code=400, detail="deal_id not found in your company")
+        ensure_can_work_lead_id(db, current_user, active_team_id, deal.lead_id)
         if lead is None and deal.lead_id:
             lead = apply_company_scope(db.query(Lead), Lead, current_user).filter(Lead.id == deal.lead_id).first()
         if client is None and deal.client_id:
