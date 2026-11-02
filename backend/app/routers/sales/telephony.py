@@ -26,6 +26,7 @@ from app.services.sales.telephony import (
 )
 from app.utils.audit import log_activity
 from app.services.sales.lead_access import ensure_can_work_lead_id
+from app.services.sales.lead_activity import mark_lead_contacted
 from app.utils.dependencies import apply_company_scope, get_active_team_id, get_current_user, require_admin_or_md
 from app.utils.helpers import normalize_phone
 
@@ -157,6 +158,7 @@ def click_to_call(
     )
     db.add(call)
     db.flush()
+    mark_lead_contacted(db, payload.lead_id)
     log_activity(
         db, user=current_user, action="created", entity_type="call",
         entity_id=call.id, entity_name="outbound",

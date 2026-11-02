@@ -38,6 +38,15 @@ class LeadUpdate(BaseModel):
     tags: Optional[List[str]] = None
 
 
+class NoteCreate(BaseModel):
+    content: str = ""
+
+
+def note_text(content_in_query: Optional[str], body: Optional[NoteCreate]) -> str:
+    """Notes come in the request body. Older app versions still send them in the URL."""
+    return ((body.content if body else content_in_query) or "").strip()
+
+
 class LeadStatusUpdate(BaseModel):
     status: LeadStatus
 

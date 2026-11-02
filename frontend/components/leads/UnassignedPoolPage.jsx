@@ -17,6 +17,8 @@ function apiDetail(err, fallback) {
   return fallback;
 }
 
+const PAGE_SIZE = 50;
+
 function teamLabel(lead) {
   if (!lead || typeof lead !== 'object') return null;
   if (Object.prototype.hasOwnProperty.call(lead, 'team_name') && lead.team_name) {
@@ -41,6 +43,7 @@ export default function UnassignedPoolPage() {
 
   const [items, setItems] = useState([]);
   const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(0);
   const [members, setMembers] = useState([]);
   const [membersError, setMembersError] = useState(null);
   const [membersLoading, setMembersLoading] = useState(false);
@@ -55,13 +58,18 @@ export default function UnassignedPoolPage() {
     if (!silent) setLoading(true);
     setError(null);
     try {
-      const res = await api.get('/leads', { params: { unassigned: true, limit: 100 } });
+      const res = await api.get('/leads', {
+        params: { unassigned: true, limit: PAGE_SIZE, skip: page * PAGE_SIZE },
+      });
       const data = res.data || {};
-      const rows = (Array.isArray(data.items) ? data.items : []).filter(
-        (lead) => lead.assigned_to_id == null || lead.assigned_to_id === undefined,
-      );
+      const rows = Array.isArray(data.items) ? data.items : [];
+      const count = Number(data.total) || 0;
+      if (rows.length === 0 && page > 0) {
+        setPage(Math.max(0, Math.ceil(count / PAGE_SIZE) - 1));
+        return;
+      }
       setItems(rows);
-      setTotal(rows.length);
+      setTotal(count);
     } catch (err) {
       setError(apiDetail(err, t('Could not load the pool.')));
       setItems([]);
@@ -69,7 +77,7 @@ export default function UnassignedPoolPage() {
     } finally {
       setLoading(false);
     }
-  }, [t]);
+  }, [t, page]);
 
   const loadMembers = useCallback(async () => {
     if (!canAssign) return;
@@ -254,6 +262,22 @@ export default function UnassignedPoolPage() {
                 );
               })}
             </ul>
+          </div>
+        )}
+
+        {!loading && !error && total > PAGE_SIZE && (
+          <div className="flex items-center justify-between">
+            <span className="text-[12px] text-muted tabular-nums">
+              {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, total)} / {total}
+            </span>
+            <div className="flex items-center gap-2">
+              <button type="button" className="btn btn-secondary h-8 disabled:opacity-50" disabled={page === 0} onClick={() => setPage((p) => p - 1)}>
+                {t('Previous')}
+              </button>
+              <button type="button" className="btn btn-secondary h-8 disabled:opacity-50" disabled={(page + 1) * PAGE_SIZE >= total} onClick={() => setPage((p) => p + 1)}>
+                {t('Next')}
+              </button>
+            </div>
           </div>
         )}
       </div>

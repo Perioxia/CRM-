@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.models.sales.email_log import EmailLog
 from app.models.sales.mailbox import MailboxConnection
+from app.services.sales.lead_activity import mark_lead_contacted
 from app.services.sales.email_tracking import build_outbound_html, mint_token, tracking_base
 from app.services.sales.mailbox import get_user_mailbox, send_via_mailbox
 from app.utils.email_service import send_email
@@ -93,6 +94,8 @@ def deliver_and_log(
         click_token_hash=click_hash,
     )
     db.add(row)
+    if ok:
+        mark_lead_contacted(db, lead_id)
     db.commit()
     db.refresh(row)
     return row

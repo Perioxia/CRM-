@@ -24,6 +24,7 @@ from app.services.sales.whatsapp import (
     session_open_until,
 )
 from app.services.sales.lead_access import ensure_can_work_lead, scope_activity_list
+from app.services.sales.lead_activity import mark_lead_contacted
 from app.services.sales.recycle import hide_deleted_lead_rows
 from app.utils.datetime_json import isoformat_utc
 from app.utils.dependencies import (
@@ -451,6 +452,8 @@ def send_template(
         sent_by_id=current_user.id,
     )
     db.add(row)
+    if ok:
+        mark_lead_contacted(db, lead_id)
     db.commit()
     db.refresh(row)
     return _serialize_message(row)
@@ -549,6 +552,8 @@ def session_send(
         sent_by_id=current_user.id,
     )
     db.add(row)
+    if ok:
+        mark_lead_contacted(db, lead_id)
     db.commit()
     db.refresh(row)
     return _serialize_message(row)

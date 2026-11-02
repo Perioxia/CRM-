@@ -58,10 +58,8 @@ export default function LeadModal({ isOpen, onClose, onRefresh, onCreated }) {
                 const res = await api.get('/leads/team-members', {
                     params: { team_id: parseInt(formData.team_id, 10) },
                 });
-                console.log('[LeadModal] team-members response:', res.data);
                 setTeamMembers(res.data?.members || []);
-            } catch (err) {
-                console.error('[LeadModal] Failed to fetch team members:', err?.response?.status, err?.response?.data);
+            } catch {
                 setTeamMembers([]);
             }
         };

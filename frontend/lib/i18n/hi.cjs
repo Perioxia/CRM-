@@ -9,6 +9,8 @@ const hi = {
   Dashboard: "डैशबोर्ड",
   Leads: "लीड",
   Owner: "मालिक",
+  Previous: "पिछला",
+  Next: "अगला",
   "Lead created": "लीड बनाई गई",
   "Lead created. It is open for your team to claim.": "लीड बनाई गई। आपकी टीम इसे क्लेम कर सकती है।",
   Clients: "ग्राहक",
