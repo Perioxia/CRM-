@@ -186,6 +186,32 @@ def test_nobody_else_can_work_on_the_lead(api, db, outsider):
         assert not sent.called and not dialled.called
 
 
+def test_a_deal_does_not_open_the_way_to_someone_elses_lead(api, db, org):
+    lead_id = api.new_lead()
+    own_lead = Lead(company_id=org.company.id, name="RepsOwn", status="Active",
+                    team_id=org.alpha.id, assigned_to_id=org.rep_same_team.id)
+    db.add(own_lead)
+    db.commit()
+    db.refresh(own_lead)
+    deal = api.call("owner", "POST", "/api/deals", json={"title": "d", "lead_id": lead_id, "amount": 1})
+    assert deal.status_code == 201, deal.text
+    deal_id = deal.json()["id"]
+    email = {"deal_id": deal_id, "subject": "s", "body": "b"}
+    call = {"deal_id": deal_id, "from_phone": "919000000009"}
+    with mock.patch("app.services.sales.crm_email.send_email", return_value=True) as mailed, \
+            mock.patch("app.routers.sales.telephony.place_exotel_call", return_value="SID") as dialled:
+        for outsider in OUTSIDERS:
+            for path, body in (("/api/emails", email), ("/api/telephony/click-to-call", call)):
+                response = api.call(outsider, "POST", path, json=body)
+                assert response.status_code in (400, 403, 404), (outsider, path, response.status_code, response.text)
+        assert api.call("rep_same_team", "POST", "/api/emails", json=email | {"lead_id": own_lead.id}).status_code == 403
+        assert not mailed.called and not dialled.called
+        for allowed in ("owner", "mgr_same_team", "md"):
+            assert api.call(allowed, "POST", "/api/emails", json=email).status_code == 201, allowed
+            assert api.call(allowed, "POST", "/api/telephony/click-to-call", json=call).status_code == 201, allowed
+        assert mailed.call_count == 3 and dialled.call_count == 3
+
+
 def test_rep_can_view_an_open_lead_but_must_claim_before_working(api, db, org):
     lead = Lead(company_id=org.company.id, name="OpenLead", status="Active", team_id=org.alpha.id)
     db.add(lead)

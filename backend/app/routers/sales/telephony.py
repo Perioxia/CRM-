@@ -123,6 +123,8 @@ def click_to_call(
         client = apply_company_scope(db.query(Client), Client, current_user).filter(Client.id == payload.client_id).first()
     if payload.deal_id is not None:
         deal = apply_company_scope(db.query(Deal), Deal, current_user).filter(Deal.id == payload.deal_id).first()
+        if deal is not None:
+            ensure_can_work_lead_id(db, current_user, active_team_id, deal.lead_id)
 
     to_phone = resolve_to_phone(
         db, company_id=company_id, lead=lead, client=client, deal=deal, to_phone=payload.to_phone,
