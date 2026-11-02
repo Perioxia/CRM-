@@ -7,8 +7,9 @@ from sqlalchemy.orm import Session
 
 from app.models.sales.lead import Lead
 from app.services.sales.import_batch import record_batch
+from app.services.sales.lead_fields import clean_lead_fields
 from app.utils.audit import log_activity
-from app.utils.helpers import normalize_email, normalize_phone
+from app.utils.helpers import normalize_email, normalize_phone, phone_variants
 
 LEAD_FIELDS = (
     "name",
@@ -117,8 +118,7 @@ def _load_existing(db: Session, company_id: int) -> tuple[dict, dict]:
         email = normalize_email(lead.email)
         if email:
             by_email[email] = lead
-        phone = normalize_phone(lead.phone)
-        if phone:
+        for phone in phone_variants(lead.phone):
             by_phone[phone] = lead
     return by_email, by_phone
 
@@ -140,6 +140,17 @@ def classify_rows(db: Session, company_id: int, headers: list[str], raw_rows: li
                 "values": values,
                 "matched_lead_id": None,
                 "reason": "missing name",
+            })
+            continue
+        try:
+            clean_lead_fields(values)
+        except ValueError as exc:
+            classified.append({
+                "index": index,
+                "status": "invalid",
+                "values": values,
+                "matched_lead_id": None,
+                "reason": str(exc),
             })
             continue
         matched = None
@@ -165,8 +176,7 @@ def classify_rows(db: Session, company_id: int, headers: list[str], raw_rows: li
             continue
         if email:
             seen_emails.add(email)
-        if phone:
-            seen_phones.add(phone)
+        seen_phones.update(phone_variants(phone))
         classified.append({
             "index": index,
             "status": "new",

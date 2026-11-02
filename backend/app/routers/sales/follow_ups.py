@@ -7,6 +7,7 @@ from datetime import datetime, date, timedelta, timezone
 
 from app.database import get_db
 from app.services.sales.lead_access import ensure_can_work_lead
+from app.services.sales.recycle import hide_deleted_lead_rows
 from app.utils.dependencies import get_current_user, apply_company_scope, ensure_company_access, get_active_team_id
 from app.models.core.user import User
 from app.models.core.team_membership import TeamMembership
@@ -20,7 +21,7 @@ router = APIRouter()
 
 def _role_scoped_lead_ids(db: Session, current_user: User, active_team_id: Optional[int]):
     """None means no extra filter (admin/md). Empty list means see nothing."""
-    query = apply_company_scope(db.query(Lead.id), Lead, current_user)
+    query = apply_company_scope(db.query(Lead.id), Lead, current_user).filter(Lead.deleted_at.is_(None))
     if current_user.role == "sales":
         if active_team_id is not None:
             query = query.filter(
@@ -40,6 +41,7 @@ def _role_scoped_lead_ids(db: Session, current_user: User, active_team_id: Optio
 
 
 def _apply_follow_up_role_scope(query, db: Session, current_user: User, active_team_id: Optional[int]):
+    query = hide_deleted_lead_rows(query, FollowUp.lead_id)
     lead_ids = _role_scoped_lead_ids(db, current_user, active_team_id)
     if lead_ids is None:
         return query

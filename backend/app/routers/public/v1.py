@@ -19,6 +19,8 @@ from app.models.sales.pipeline import Pipeline, PipelineStage
 from app.services.sales.api_keys import ApiPrincipal
 from app.services.sales.pipeline_seed import ensure_default_pipeline
 from app.services.finance.gst import compute_gst, normalize_gstin
+from app.services.sales.lead_fields import clean_lead_fields
+from app.utils.helpers import normalize_email, normalize_phone
 from app.utils.api_principal import get_api_principal, require_api_write
 
 router = APIRouter()
@@ -260,19 +262,27 @@ def get_lead(lead_id: int, db: Session = Depends(get_db), principal: ApiPrincipa
     return _lead_json(_company_lead(db, principal.company_id, lead_id))
 
 
+def _clean_lead_body(values: dict) -> dict:
+    try:
+        return clean_lead_fields(values)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.post("/leads", status_code=status.HTTP_201_CREATED)
 def create_lead(body: LeadWrite, db: Session = Depends(get_db), principal: ApiPrincipal = Depends(require_api_write)):
     name = (body.name or "").strip()
     if not name:
         raise HTTPException(status_code=400, detail="name is required")
+    cleaned = _clean_lead_body(body.model_dump())
     lead = Lead(
         company_id=principal.company_id,
-        name=name,
-        email=body.email,
-        phone=body.phone,
-        company=body.company,
-        source=body.source,
-        service_type=body.service_type,
+        name=cleaned["name"],
+        email=normalize_email(cleaned.get("email")),
+        phone=normalize_phone(cleaned.get("phone")),
+        company=cleaned.get("company"),
+        source=cleaned.get("source"),
+        service_type=cleaned.get("service_type"),
         notes=body.notes,
     )
     db.add(lead)
@@ -292,6 +302,11 @@ def patch_lead(
     data = body.model_dump(exclude_unset=True)
     if "name" in data and not (data["name"] or "").strip():
         raise HTTPException(status_code=400, detail="name is required")
+    data |= _clean_lead_body(data)
+    if "email" in data:
+        data["email"] = normalize_email(data["email"])
+    if "phone" in data:
+        data["phone"] = normalize_phone(data["phone"])
     for field, value in data.items():
         setattr(lead, field, value)
     db.commit()

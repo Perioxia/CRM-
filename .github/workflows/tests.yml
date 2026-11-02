@@ -70,7 +70,7 @@ jobs:
           CRM_PG_TEST_URL: postgresql://ci:ci@127.0.0.1:5432/crm_ci_leads_test
         run: |
           psql -h 127.0.0.1 -U ci -d crm_ci_test -c "CREATE DATABASE crm_ci_leads_test"
-          python -m pytest tests/sales/test_lead_access.py tests/sales/test_lead_claim.py -q -p no:cacheprovider -rsx
+          python -m pytest tests/sales/test_lead_access.py tests/sales/test_lead_claim.py tests/sales/test_lead_data.py -q -p no:cacheprovider -rsx
 
   frontend:
     runs-on: ubuntu-24.04

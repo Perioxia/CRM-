@@ -25,6 +25,7 @@ from app.services.sales.booking import (
 )
 from app.services.sales.calendar_sync import sync_meeting_outbound
 from app.services.sales.lead_access import ensure_can_work_lead_id
+from app.services.sales.recycle import hide_deleted_lead_rows
 from app.utils.audit import log_activity
 from app.utils.datetime_json import isoformat_utc
 from app.utils.dependencies import (
@@ -72,7 +73,7 @@ def _naive_utc(dt: Optional[datetime]) -> Optional[datetime]:
 def _scoped_meetings_query(db: Session, current_user: User, active_team_id: Optional[int]):
     if _user_role_str(current_user) == "purchase":
         raise HTTPException(status_code=403, detail="Not allowed")
-    query = apply_company_scope(db.query(Meeting), Meeting, current_user)
+    query = hide_deleted_lead_rows(apply_company_scope(db.query(Meeting), Meeting, current_user), Meeting.lead_id)
     role = _user_role_str(current_user)
     if role == "sales":
         return query.outerjoin(Lead, Meeting.lead_id == Lead.id).filter(

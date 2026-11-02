@@ -18,6 +18,7 @@ from app.utils.datetime_json import isoformat_utc, task_due_for_json
 from app.utils.notify import send_notification
 from app.services.sales.lead_access import (
     can_view_lead,
+    can_work_lead,
     ensure_can_view_lead,
     ensure_can_work_lead,
     lead_page_path,
@@ -39,15 +40,22 @@ from app.services.sales.lead_ownership import (
 from app.services.sales.territory import assign_lead_by_territory
 from app.services.sales.workflow import run_workflows
 from app.services.sales.custom_fields import get_values_map, set_values
+from app.services.sales.lead_fields import clean_lead_fields
 from app.services.sales.merge import find_duplicate_leads, merge_leads
-from app.services.sales.recycle import restore_lead, get_trashed_lead, soft_delete_lead
+from app.services.sales.recycle import (
+    get_trashed_lead,
+    hide_deleted_lead_rows,
+    purge_lead,
+    restore_lead,
+    soft_delete_lead,
+)
 from app.services.sales.tags import list_tag_names, set_lead_tags
 from app.services.sales.enrichment import apply_lead as enrich_lead
 from app.services.scoring.engine import score_entity
 from app.services.scoring.recompute import active_rules, recompute_one
 from app.utils.dependencies import require_admin_or_md
 from pydantic import BaseModel
-from app.utils.helpers import normalize_email, normalize_phone
+from app.utils.helpers import normalize_email, normalize_phone, phone_variants
 from sqlalchemy import func as sa_func, or_
 from app.schemas.sales import (
     LeadResponse, LeadListResponse, LeadCreate, LeadUpdate, LeadStatusUpdate,
@@ -64,6 +72,25 @@ def _user_role_str(user: User) -> str:
     if r is None:
         return ""
     return str(getattr(r, "value", r))
+
+
+def _with_clean_fields(lead_data):
+    """Refuse bad contact details with a message, and trim the good ones."""
+    try:
+        return lead_data.model_copy(update=clean_lead_fields(lead_data.model_dump()))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _check_status_change(lead: Lead, new_status, new_owner_id: Optional[int] = None) -> None:
+    value = getattr(new_status, "value", new_status)
+    if lead_is_converted(lead) and value != LeadStatus.CONVERTED.value:
+        raise HTTPException(status_code=400, detail="A converted lead cannot change status")
+    if value == LeadStatus.CONVERTED.value and not (lead.assigned_to_id or new_owner_id):
+        raise HTTPException(
+            status_code=400,
+            detail="A lead must be assigned to a specific user before it can be converted to a client."
+        )
 
 
 def _lead_status_value(lead: Lead) -> str:
@@ -113,7 +140,7 @@ def _ensure_client_for_converted_lead(db: Session, lead: Lead, current_user: Use
     # Check if a client with the same phone already exists in the company
     if normalized_phone:
         existing_by_phone = apply_company_scope(db.query(Client), Client, current_user).filter(
-            Client.phone == normalized_phone
+            Client.phone.in_(phone_variants(normalized_phone))
         ).first()
         if existing_by_phone:
             existing_by_phone.converted_from_lead_id = lead.id
@@ -212,7 +239,7 @@ def get_sales_dashboard(
     today_start = datetime(now.year, now.month, now.day)  # naive local calendar day boundary; matches tasks router
     today_end = today_start + timedelta(days=1)
     
-    task_query = apply_company_scope(db.query(Task), Task, current_user)
+    task_query = hide_deleted_lead_rows(apply_company_scope(db.query(Task), Task, current_user), Task.lead_id)
     
     # Role-based filtering for tasks
     if _user_role_str(current_user) == "sales":
@@ -709,6 +736,7 @@ def create_lead(
         raise HTTPException(status_code=403, detail="User must be assigned to a company")
     if _user_role_str(current_user) == "purchase":
         raise HTTPException(status_code=403, detail="Purchase users cannot create leads")
+    lead_data = _with_clean_fields(lead_data)
 
     # Team selection rules
     requested_team_id = getattr(lead_data, "team_id", None)
@@ -777,7 +805,7 @@ def create_lead(
             )
     if normalized_phone:
         existing_lead_by_phone = apply_company_scope(db.query(Lead.id), Lead, current_user).filter(
-            Lead.phone == normalized_phone,
+            Lead.phone.in_(phone_variants(normalized_phone)),
             Lead.deleted_at.is_(None),
         ).first()
         if existing_lead_by_phone:
@@ -786,7 +814,7 @@ def create_lead(
                 detail="A lead with this phone number already exists."
             )
         existing_client_by_phone = apply_company_scope(db.query(Client.id), Client, current_user).filter(
-            Client.phone == normalized_phone
+            Client.phone.in_(phone_variants(normalized_phone))
         ).first()
         if existing_client_by_phone:
             raise HTTPException(
@@ -855,6 +883,9 @@ def update_lead(
         raise HTTPException(status_code=404, detail="Lead not found")
     ensure_company_access(lead, current_user)
     ensure_can_work_lead(lead, current_user, active_team_id, "You cannot edit this lead")
+    lead_data = _with_clean_fields(lead_data)
+    if lead_data.status is not None:
+        _check_status_change(lead, lead_data.status, lead_data.assigned_to_id)
 
     old_status = lead.status
     old_assigned_to = lead.assigned_to_id
@@ -891,7 +922,7 @@ def update_lead(
         normalized_phone = normalize_phone(lead_data.phone)
         if normalized_phone:
             existing_lead_by_phone = apply_company_scope(db.query(Lead.id), Lead, current_user).filter(
-                Lead.phone == normalized_phone,
+                Lead.phone.in_(phone_variants(normalized_phone)),
                 Lead.id != lead.id,
                 Lead.deleted_at.is_(None),
             ).first()
@@ -901,7 +932,7 @@ def update_lead(
                     detail="A lead with this phone number already exists."
                 )
             existing_client_by_phone = apply_company_scope(db.query(Client.id), Client, current_user).filter(
-                Client.phone == normalized_phone
+                Client.phone.in_(phone_variants(normalized_phone))
             ).first()
             if existing_client_by_phone:
                 raise HTTPException(
@@ -1008,13 +1039,7 @@ def update_lead_status(
 
     old_status = lead.status
 
-    # Mandatory assignment check for Converted status
-    if status_data.status == LeadStatus.CONVERTED.value or status_data.status == LeadStatus.CONVERTED:
-        if not lead.assigned_to_id:
-            raise HTTPException(
-                status_code=400,
-                detail="A lead must be assigned to a specific user before it can be converted to a client."
-            )
+    _check_status_change(lead, status_data.status)
 
     lead.status = status_data.status
 
@@ -1139,7 +1164,10 @@ def restore_trashed_lead(
     active_team_id: Optional[int] = Depends(get_active_team_id),
 ):
     lead = get_trashed_lead(db, current_user, lead_id)
-    ensure_can_work_lead(lead, current_user, active_team_id, "You cannot restore this lead")
+    if not can_work_lead(lead, current_user, active_team_id):
+        raise HTTPException(status_code=403, detail="You cannot restore this lead")
+    if find_duplicate_leads(db, lead.company_id, lead):
+        raise HTTPException(status_code=400, detail="Another lead now has this email or phone. Merge them instead.")
     restore_lead(lead)
     db.commit()
     return {"message": "Lead restored", "id": lead.id}
@@ -1152,7 +1180,7 @@ def purge_trashed_lead(
     current_user: User = Depends(require_admin_or_md),
 ):
     lead = get_trashed_lead(db, current_user, lead_id)
-    db.delete(lead)
+    purge_lead(db, lead)
     db.commit()
     return {"message": "Lead permanently deleted"}
 

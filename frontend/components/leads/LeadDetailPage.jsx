@@ -531,6 +531,14 @@ export default function LeadDetailPage() {
               )}
             </div>
             <div className="space-y-4">
+              {lead.notes && (
+                <div className="text-xs">
+                  <p className="text-slate-600 dark:text-slate-300 leading-relaxed bg-amber-50 dark:bg-amber-900/20 p-3 rounded-lg border border-amber-100 dark:border-amber-800/40 whitespace-pre-wrap">
+                    {lead.notes}
+                  </p>
+                  <div className="mt-1 px-1 text-slate-400">Added when the lead came in</div>
+                </div>
+              )}
               {lead.notes_list?.map((note) => (
                 <div key={note.id} className="text-xs">
                   <p className="text-slate-600 dark:text-slate-300 leading-relaxed bg-slate-50 dark:bg-slate-700/30 p-3 rounded-lg border border-slate-100 dark:border-slate-700/50">
@@ -542,7 +550,7 @@ export default function LeadDetailPage() {
                   </div>
                 </div>
               ))}
-              {(!lead.notes_list || lead.notes_list.length === 0) && (
+              {!lead.notes && (!lead.notes_list || lead.notes_list.length === 0) && (
                 <p className="text-xs text-slate-400 text-center py-4">No notes yet.</p>
               )}
             </div>

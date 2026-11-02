@@ -13,6 +13,7 @@ from app.models.sales.follow_up import FollowUp
 from app.models.sales.task import Task
 from app.services.sales.daily_digest import run_daily_digests
 from app.services.sales.lead_sheet import sync_due_sheets
+from app.services.sales.recycle import hide_deleted_lead_rows
 from app.services.sales.whatsapp import send_cadence_whatsapp
 from app.utils.email_service import send_email
 from app.utils.notify import send_notification
@@ -44,7 +45,7 @@ def run_due_reminders(db: Session, now: datetime | None = None) -> dict:
     flags: dict[int, tuple[bool, bool]] = {}
 
     tasks = (
-        db.query(Task)
+        hide_deleted_lead_rows(db.query(Task), Task.lead_id)
         .options(joinedload(Task.assigned_to))
         .filter(
             Task.reminded_at.is_(None),
@@ -77,7 +78,7 @@ def run_due_reminders(db: Session, now: datetime | None = None) -> dict:
         task_count += 1
 
     follow_ups = (
-        db.query(FollowUp)
+        hide_deleted_lead_rows(db.query(FollowUp), FollowUp.lead_id)
         .options(joinedload(FollowUp.created_by), joinedload(FollowUp.lead))
         .filter(
             FollowUp.reminded_at.is_(None),
@@ -149,7 +150,7 @@ def run_due_reminders(db: Session, now: datetime | None = None) -> dict:
         deal_count += 1
 
     wa_follow_ups = (
-        db.query(FollowUp)
+        hide_deleted_lead_rows(db.query(FollowUp), FollowUp.lead_id)
         .options(joinedload(FollowUp.lead))
         .filter(
             FollowUp.reminded_at.is_(None),

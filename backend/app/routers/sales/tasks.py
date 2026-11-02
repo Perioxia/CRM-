@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from app.database import get_db
 from app.utils.datetime_json import task_due_for_json
 from app.services.sales.lead_access import ensure_can_work_lead
+from app.services.sales.recycle import hide_deleted_lead_rows
 from app.utils.dependencies import get_current_user, apply_company_scope, ensure_company_access, get_active_team_id
 from app.models.core.user import User
 from app.models.core.team_membership import TeamMembership
@@ -244,7 +245,7 @@ def get_tasks_list(
 ):
     """Get full task list with grouping (paginated)."""
     # Base query for tasks
-    query = apply_company_scope(db.query(Task), Task, current_user)
+    query = hide_deleted_lead_rows(apply_company_scope(db.query(Task), Task, current_user), Task.lead_id)
     
     # Role-based filtering
     if _user_role_str(current_user) == "sales":
@@ -343,7 +344,7 @@ def get_priority_tasks(
     today_start = datetime(now.year, now.month, now.day)
     today_end = today_start + timedelta(days=1)
     
-    task_query = apply_company_scope(db.query(Task), Task, current_user)
+    task_query = hide_deleted_lead_rows(apply_company_scope(db.query(Task), Task, current_user), Task.lead_id)
     
     # Role-based filtering
     if _user_role_str(current_user) == "sales":
