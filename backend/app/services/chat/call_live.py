@@ -79,7 +79,7 @@ def _run(company_id: int | None, fn, *args):
         reset_tenant()
 
 
-async def _db(company_id: int | None, fn, *args):
+async def in_own_session(company_id: int | None, fn, *args):
     return await run_in_threadpool(_run, company_id, fn, *args)
 
 
@@ -146,7 +146,7 @@ async def _announce(call: dict, done: dict) -> None:
 async def finish(call: dict, final_status: str) -> None:
     """End a call with an explicit outcome (busy, unavailable, failed, …): log + chat entry first,
     then Redis state and busy markers, then tell both sides. Safe to repeat."""
-    done = await _db(call["company_id"], calls.finish_call, call["id"], call["company_id"], final_status)
+    done = await in_own_session(call["company_id"], calls.finish_call, call["id"], call["company_id"], final_status)
     await _drop_live_state(call)
     if done is not None:
         await _announce(call, done)
@@ -154,7 +154,7 @@ async def finish(call: dict, final_status: str) -> None:
 
 async def _end(call: dict, actor_id: int | None, action: str) -> None:
     """End a call because of cancel / decline / hangup / timeout; the database decides the outcome."""
-    done = await _db(call["company_id"], calls.end_call, call["id"], call["company_id"], actor_id, action)
+    done = await in_own_session(call["company_id"], calls.end_call, call["id"], call["company_id"], actor_id, action)
     if done is None and action == "timeout":
         return  # answered (or ended) before the timeout: leave it alone
     await _drop_live_state(call)
@@ -168,7 +168,7 @@ async def invite(conn: Connection, conversation_id: int) -> dict:
     Raises HTTPException (404/409) or RealtimeUnavailable."""
     if await hub.kv_get(_busy_key(conn.user_id)) is not None:
         raise HTTPException(status_code=409, detail="You are already in a call")
-    call = await _db(conn.company_id, _create, conn.user_id, conversation_id)
+    call = await in_own_session(conn.company_id, _create, conn.user_id, conversation_id)
     call.update({"caller_conn": conn.conn_id, "callee_conn": None, "state": "ringing"})
     ring_ttl = settings.CHAT_CALL_RING_SECONDS + RING_GRACE
 
@@ -222,7 +222,7 @@ async def accept(conn: Connection, call_id: int) -> bool:
     await _save(call, ACTIVE_TTL)
     for uid in (call["caller_id"], call["callee_id"]):
         await hub.kv_set(_busy_key(uid), str(call_id), ACTIVE_TTL)
-    outcome = await _db(call["company_id"], calls.mark_active, call_id, call["company_id"])
+    outcome = await in_own_session(call["company_id"], calls.mark_active, call_id, call["company_id"])
     if outcome != "active":
         await _drop_live_state(call)
         await _send(conn, {"type": "call.ended", "call_id": call_id, "status": outcome or "cancelled"})
@@ -272,7 +272,7 @@ async def report(conn: Connection, call_id: int, connection: str) -> None:
     call = await _load(call_id)
     if call is None or not _in_call(conn, call):
         return
-    await _db(conn.company_id, calls.set_connection, call_id, conn.company_id, conn.user_id, connection)
+    await in_own_session(conn.company_id, calls.set_connection, call_id, conn.company_id, conn.user_id, connection)
 
 
 async def keep_alive(conn: Connection, call_ids: set[int]) -> None:
@@ -323,10 +323,10 @@ async def sweep_once() -> int:
     if not await hub.kv_set("chat:calls:sweep", "1", SWEEP_SECONDS - 5, only_if_absent=True):
         return 0
     closed = 0
-    for call_id, company_id in await _db(None, calls.stale_candidates, STALE_AFTER):
+    for call_id, company_id in await in_own_session(None, calls.stale_candidates, STALE_AFTER):
         if await hub.kv_get(_state_key(call_id)) is not None:
             continue
-        done = await _db(company_id, calls.finish_call, call_id, company_id, "interrupted")
+        done = await in_own_session(company_id, calls.finish_call, call_id, company_id, "interrupted")
         if done is not None:
             closed += 1
             # Tell both people, so no tab keeps showing the call and the chat shows its entry.

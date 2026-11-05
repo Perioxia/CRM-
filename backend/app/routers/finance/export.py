@@ -7,17 +7,28 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from typing import Optional
 import csv
+import re
 import io
 from datetime import datetime
 
 from app.database import get_db
-from app.utils.dependencies import get_current_user, apply_company_scope
+from app.utils.dependencies import get_current_user, apply_company_scope, get_active_team_id
+from app.services.sales.lead_access import scope_visible_leads
 from app.models.core.user import User
 from app.models.sales.lead import Lead
 from app.models.sales.client import Client
 from app.models.finance.invoice import Invoice
 
 router = APIRouter()
+
+_PLAIN_NUMBER = re.compile(r"[+\-]?[\d\s().\-]*")
+
+
+def _safe_cell(value):
+    """Spreadsheets run a cell starting with these as a formula, and outsiders can set a lead's name."""
+    if isinstance(value, str) and value[:1] in ("=", "+", "-", "@", "\t", "\r") and not _PLAIN_NUMBER.fullmatch(value):
+        return f"'{value}"
+    return value
 
 
 def make_csv_response(rows: list, headers: list, filename: str):
@@ -26,7 +37,7 @@ def make_csv_response(rows: list, headers: list, filename: str):
     writer = csv.writer(output)
     writer.writerow(headers)
     for row in rows:
-        writer.writerow(row)
+        writer.writerow([_safe_cell(cell) for cell in row])
     output.seek(0)
     return StreamingResponse(
         iter([output.getvalue()]),
@@ -40,7 +51,7 @@ def build_csv_string(rows: list, headers: list) -> str:
     writer = csv.writer(output)
     writer.writerow(headers)
     for row in rows:
-        writer.writerow(row)
+        writer.writerow([_safe_cell(cell) for cell in row])
     return output.getvalue()
 
 
@@ -48,10 +59,12 @@ def build_csv_string(rows: list, headers: list) -> str:
 def export_leads(
     status: Optional[str] = Query(None),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    active_team_id: Optional[int] = Depends(get_active_team_id),
 ):
     """Export leads as CSV"""
-    query = apply_company_scope(db.query(Lead), Lead, current_user)
+    query = apply_company_scope(db.query(Lead), Lead, current_user).filter(Lead.deleted_at.is_(None))
+    query = scope_visible_leads(query, db, current_user, active_team_id)
     if status:
         query = query.filter(Lead.status == status)
     leads = query.order_by(Lead.created_at.desc()).all()

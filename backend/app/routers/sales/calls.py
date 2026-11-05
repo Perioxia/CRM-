@@ -15,7 +15,9 @@ from app.services.sales.activity_parents import (
 )
 from app.utils.audit import log_activity
 from app.utils.datetime_json import isoformat_utc
-from app.utils.dependencies import apply_company_scope, ensure_company_access, get_current_user
+from app.services.sales.lead_access import ensure_can_work_lead_id, scope_activity_list, scope_activity_rows
+from app.services.sales.lead_activity import mark_lead_contacted, mark_lead_responded
+from app.utils.dependencies import apply_company_scope, ensure_company_access, get_active_team_id, get_current_user
 
 router = APIRouter()
 
@@ -90,10 +92,10 @@ def _serialize(call: CallLog) -> dict:
     }
 
 
-def _get_or_404(db: Session, current_user, call_id: int) -> CallLog:
-    call = apply_company_scope(db.query(CallLog), CallLog, current_user).filter(
-        CallLog.id == call_id
-    ).first()
+def _get_or_404(db: Session, current_user, active_team_id: Optional[int], call_id: int) -> CallLog:
+    query = apply_company_scope(db.query(CallLog), CallLog, current_user)
+    query = scope_activity_rows(query, CallLog, CallLog.created_by_id, db, current_user, active_team_id)
+    call = query.filter(CallLog.id == call_id).first()
     if call is None:
         raise HTTPException(status_code=404, detail="Call not found")
     ensure_company_access(call, current_user)
@@ -105,11 +107,13 @@ def create_call(
     payload: CallCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    active_team_id: Optional[int] = Depends(get_active_team_id),
 ):
     require_parent_in_company(
         db, current_user,
         lead_id=payload.lead_id, client_id=payload.client_id, deal_id=payload.deal_id,
     )
+    ensure_can_work_lead_id(db, current_user, active_team_id, payload.lead_id)
     direction = _normalize_direction(payload.direction, required=True)
     duration = _validate_duration(payload.duration_seconds)
     logged_at = parse_iso_datetime(payload.logged_at, "logged_at") or naive_utc_now()
@@ -127,6 +131,10 @@ def create_call(
     )
     db.add(call)
     db.flush()
+    if direction == CallDirection.INBOUND.value:
+        mark_lead_responded(db, payload.lead_id)
+    else:
+        mark_lead_contacted(db, payload.lead_id)
     log_activity(
         db, user=current_user, action="created", entity_type="call",
         entity_id=call.id, entity_name=direction,
@@ -146,10 +154,10 @@ def list_calls(
     limit: int = Query(100, ge=1, le=500),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    active_team_id: Optional[int] = Depends(get_active_team_id),
 ):
     query = apply_company_scope(db.query(CallLog), CallLog, current_user)
-    if lead_id is not None:
-        query = query.filter(CallLog.lead_id == lead_id)
+    query = scope_activity_list(query, CallLog, CallLog.created_by_id, lead_id, db, current_user, active_team_id)
     if client_id is not None:
         query = query.filter(CallLog.client_id == client_id)
     if deal_id is not None:
@@ -166,8 +174,9 @@ def get_call(
     call_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    active_team_id: Optional[int] = Depends(get_active_team_id),
 ):
-    return _serialize(_get_or_404(db, current_user, call_id))
+    return _serialize(_get_or_404(db, current_user, active_team_id, call_id))
 
 
 @router.patch("/{call_id:int}")
@@ -176,8 +185,9 @@ def update_call(
     payload: CallUpdate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    active_team_id: Optional[int] = Depends(get_active_team_id),
 ):
-    call = _get_or_404(db, current_user, call_id)
+    call = _get_or_404(db, current_user, active_team_id, call_id)
     data = payload.model_dump(exclude_unset=True)
     parent_keys = {"lead_id", "client_id", "deal_id"}
     if parent_keys & data.keys():
@@ -187,6 +197,8 @@ def update_call(
             client_id=data.get("client_id", call.client_id),
             deal_id=data.get("deal_id", call.deal_id),
         )
+        if data.get("lead_id") != call.lead_id:
+            ensure_can_work_lead_id(db, current_user, active_team_id, data.get("lead_id"))
     if "direction" in data:
         call.direction = _normalize_direction(data["direction"], required=True)
         data.pop("direction")
@@ -215,8 +227,9 @@ def delete_call(
     call_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    active_team_id: Optional[int] = Depends(get_active_team_id),
 ):
-    call = _get_or_404(db, current_user, call_id)
+    call = _get_or_404(db, current_user, active_team_id, call_id)
     log_activity(
         db, user=current_user, action="deleted", entity_type="call",
         entity_id=call.id, entity_name=getattr(call.direction, "value", call.direction),

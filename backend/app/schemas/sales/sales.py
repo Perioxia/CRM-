@@ -33,8 +33,18 @@ class LeadUpdate(BaseModel):
     service_type: Optional[str] = None
     notes: Optional[str] = None
     assigned_to_id: Optional[int] = None
+    only_if_unassigned: bool = False
     custom_fields: Optional[dict] = None
     tags: Optional[List[str]] = None
+
+
+class NoteCreate(BaseModel):
+    content: str = ""
+
+
+def note_text(content_in_query: Optional[str], body: Optional[NoteCreate]) -> str:
+    """Notes come in the request body. Older app versions still send them in the URL."""
+    return ((body.content if body else content_in_query) or "").strip()
 
 
 class LeadStatusUpdate(BaseModel):

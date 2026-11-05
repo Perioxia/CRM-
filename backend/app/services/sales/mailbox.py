@@ -19,6 +19,7 @@ from app.models.sales.client import Client
 from app.models.sales.deal import Deal
 from app.models.sales.email_log import EmailLog
 from app.models.sales.lead import Lead
+from app.services.sales.lead_activity import mark_lead_contacted, mark_lead_responded
 from app.models.sales.mailbox import MailboxConnection
 from app.services.auth.oauth import (
     GOOGLE_AUTH,
@@ -550,6 +551,10 @@ def import_message(db: Session, connection: MailboxConnection, message: MailboxM
         sent_by_id=connection.user_id if direction == "outbound" else None,
     )
     db.add(row)
+    if direction == "outbound":
+        mark_lead_contacted(db, matched["lead_id"])
+    else:
+        mark_lead_responded(db, matched["lead_id"])
     db.commit()
     return True
 

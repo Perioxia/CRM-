@@ -25,7 +25,9 @@ from app.services.sales.telephony import (
     webhook_url,
 )
 from app.utils.audit import log_activity
-from app.utils.dependencies import apply_company_scope, get_current_user, require_admin_or_md
+from app.services.sales.lead_access import ensure_can_work_lead_id
+from app.services.sales.lead_activity import mark_lead_contacted
+from app.utils.dependencies import apply_company_scope, get_active_team_id, get_current_user, require_admin_or_md
 from app.utils.helpers import normalize_phone
 
 router = APIRouter()
@@ -102,6 +104,7 @@ def click_to_call(
     payload: ClickToCallWrite,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    active_team_id: Optional[int] = Depends(get_active_team_id),
 ):
     company_id = _company_id(current_user)
     row = db.query(CompanySettings).filter(CompanySettings.company_id == company_id).first()
@@ -112,6 +115,7 @@ def click_to_call(
         db, current_user,
         lead_id=payload.lead_id, client_id=payload.client_id, deal_id=payload.deal_id,
     )
+    ensure_can_work_lead_id(db, current_user, active_team_id, payload.lead_id)
     lead = client = deal = None
     if payload.lead_id is not None:
         lead = apply_company_scope(db.query(Lead), Lead, current_user).filter(Lead.id == payload.lead_id).first()
@@ -119,6 +123,8 @@ def click_to_call(
         client = apply_company_scope(db.query(Client), Client, current_user).filter(Client.id == payload.client_id).first()
     if payload.deal_id is not None:
         deal = apply_company_scope(db.query(Deal), Deal, current_user).filter(Deal.id == payload.deal_id).first()
+        if deal is not None:
+            ensure_can_work_lead_id(db, current_user, active_team_id, deal.lead_id)
 
     to_phone = resolve_to_phone(
         db, company_id=company_id, lead=lead, client=client, deal=deal, to_phone=payload.to_phone,
@@ -154,6 +160,7 @@ def click_to_call(
     )
     db.add(call)
     db.flush()
+    mark_lead_contacted(db, payload.lead_id)
     log_activity(
         db, user=current_user, action="created", entity_type="call",
         entity_id=call.id, entity_name="outbound",

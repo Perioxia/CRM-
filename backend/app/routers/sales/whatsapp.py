@@ -23,6 +23,9 @@ from app.services.sales.whatsapp import (
     post_gupshup_template,
     session_open_until,
 )
+from app.services.sales.lead_access import ensure_can_work_lead, scope_activity_list
+from app.services.sales.lead_activity import mark_lead_contacted
+from app.services.sales.recycle import hide_deleted_lead_rows
 from app.utils.datetime_json import isoformat_utc
 from app.utils.dependencies import (
     apply_company_scope,
@@ -168,6 +171,7 @@ def _scoped_threads_query(db: Session, current_user: User, active_team_id: Optio
         .outerjoin(Client, WhatsAppMessage.client_id == Client.id)
         .filter(WhatsAppMessage.id.in_(_latest_thread_ids(db, current_user)))
     )
+    query = hide_deleted_lead_rows(query, WhatsAppMessage.lead_id)
     if role == "sales":
         return query.filter(
             or_(
@@ -360,11 +364,13 @@ def list_messages(
     client_id: Optional[int] = Query(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    active_team_id: Optional[int] = Depends(get_active_team_id),
 ):
     _company_user(current_user)
     query = apply_company_scope(db.query(WhatsAppMessage), WhatsAppMessage, current_user)
-    if lead_id is not None:
-        query = query.filter(WhatsAppMessage.lead_id == lead_id)
+    query = scope_activity_list(
+        query, WhatsAppMessage, WhatsAppMessage.sent_by_id, lead_id, db, current_user, active_team_id
+    )
     if client_id is not None:
         query = query.filter(WhatsAppMessage.client_id == client_id)
     rows = query.order_by(WhatsAppMessage.id.desc()).limit(100).all()
@@ -387,6 +393,7 @@ def send_template(
     body: SendWrite,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    active_team_id: Optional[int] = Depends(get_active_team_id),
 ):
     company_id = _company_user(current_user)
     template = _get_template(db, current_user, body.template_id)
@@ -402,6 +409,7 @@ def send_template(
         if record is None:
             raise HTTPException(status_code=404, detail="Not found")
         ensure_company_access(record, current_user)
+        ensure_can_work_lead(record, current_user, active_team_id)
         phone = record.phone
         lead_id = record.id
     if body.client_id is not None:
@@ -444,6 +452,8 @@ def send_template(
         sent_by_id=current_user.id,
     )
     db.add(row)
+    if ok:
+        mark_lead_contacted(db, lead_id)
     db.commit()
     db.refresh(row)
     return _serialize_message(row)
@@ -481,6 +491,7 @@ def session_send(
     body: SessionSendWrite,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    active_team_id: Optional[int] = Depends(get_active_team_id),
 ):
     company_id = _company_user(current_user)
     text = (body.body or "").strip()
@@ -498,6 +509,7 @@ def session_send(
         if record is None:
             raise HTTPException(status_code=404, detail="Not found")
         ensure_company_access(record, current_user)
+        ensure_can_work_lead(record, current_user, active_team_id)
         lead_id = record.id
         phone = record.phone
     if body.client_id is not None:
@@ -540,6 +552,8 @@ def session_send(
         sent_by_id=current_user.id,
     )
     db.add(row)
+    if ok:
+        mark_lead_contacted(db, lead_id)
     db.commit()
     db.refresh(row)
     return _serialize_message(row)

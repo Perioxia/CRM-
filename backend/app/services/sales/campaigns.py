@@ -106,7 +106,12 @@ def delete_campaign(db: Session, row: EmailCampaign) -> None:
 
 def _audience_rows(db: Session, company_id: int, audience: str):
     if audience == "leads":
-        return db.query(Lead).filter(Lead.company_id == company_id).order_by(Lead.id.asc()).all()
+        return (
+            db.query(Lead)
+            .filter(Lead.company_id == company_id, Lead.deleted_at.is_(None))
+            .order_by(Lead.id.asc())
+            .all()
+        )
     return db.query(Client).filter(Client.company_id == company_id).order_by(Client.id.asc()).all()
 
 

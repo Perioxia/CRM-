@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation';
 import { X, Loader2 } from 'lucide-react';
 import api from '../../services/api';
 
-export default function LeadModal({ isOpen, onClose, onRefresh }) {
+export default function LeadModal({ isOpen, onClose, onRefresh, onCreated }) {
     const pathname = usePathname();
     const isManager = pathname?.startsWith('/manager') || pathname?.startsWith('/md');
 
@@ -58,10 +58,8 @@ export default function LeadModal({ isOpen, onClose, onRefresh }) {
                 const res = await api.get('/leads/team-members', {
                     params: { team_id: parseInt(formData.team_id, 10) },
                 });
-                console.log('[LeadModal] team-members response:', res.data);
                 setTeamMembers(res.data?.members || []);
-            } catch (err) {
-                console.error('[LeadModal] Failed to fetch team members:', err?.response?.status, err?.response?.data);
+            } catch {
                 setTeamMembers([]);
             }
         };
@@ -72,7 +70,11 @@ export default function LeadModal({ isOpen, onClose, onRefresh }) {
 
     const handleChange = (e) => {
         const { name, value } = e.target;
-        setFormData(prev => ({ ...prev, [name]: value }));
+        setFormData(prev => ({
+            ...prev,
+            [name]: value,
+            ...(name === 'team_id' ? { assigned_to_id: '' } : {}),
+        }));
     };
 
     const handleSubmit = async (e) => {
@@ -86,8 +88,9 @@ export default function LeadModal({ isOpen, onClose, onRefresh }) {
                 assigned_to_id: formData.assigned_to_id ? parseInt(formData.assigned_to_id, 10) : undefined,
             };
             if (!payload.assigned_to_id) delete payload.assigned_to_id;
-            await api.post('/leads', payload);
+            const res = await api.post('/leads', payload);
             onRefresh();
+            onCreated?.(res.data);
             onClose();
             setFormData({
                 name: '', email: '', phone: '', company: '', team_id: '', assigned_to_id: '', source: '', service_type: '', notes: ''

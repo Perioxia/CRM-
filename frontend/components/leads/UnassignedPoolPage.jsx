@@ -6,6 +6,7 @@ import { usePathname } from 'next/navigation';
 import { Loader2 } from 'lucide-react';
 import api from '../../services/api';
 import { leadsHomePath } from '../../lib/leadsPaths';
+import { announceLeadsChanged, useLiveRefresh } from '../../lib/useLiveRefresh';
 import { useAuth } from '../../contexts/AuthContext';
 import { useT } from '../../contexts/LocaleContext';
 import KPICard from '../shared/KPICard';
@@ -15,6 +16,8 @@ function apiDetail(err, fallback) {
   if (typeof detail === 'string' && detail.trim()) return detail;
   return fallback;
 }
+
+const PAGE_SIZE = 50;
 
 function teamLabel(lead) {
   if (!lead || typeof lead !== 'object') return null;
@@ -40,6 +43,7 @@ export default function UnassignedPoolPage() {
 
   const [items, setItems] = useState([]);
   const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(0);
   const [members, setMembers] = useState([]);
   const [membersError, setMembersError] = useState(null);
   const [membersLoading, setMembersLoading] = useState(false);
@@ -54,13 +58,18 @@ export default function UnassignedPoolPage() {
     if (!silent) setLoading(true);
     setError(null);
     try {
-      const res = await api.get('/leads', { params: { unassigned: true, limit: 100 } });
+      const res = await api.get('/leads', {
+        params: { unassigned: true, limit: PAGE_SIZE, skip: page * PAGE_SIZE },
+      });
       const data = res.data || {};
-      const rows = (Array.isArray(data.items) ? data.items : []).filter(
-        (lead) => lead.assigned_to_id == null || lead.assigned_to_id === undefined,
-      );
+      const rows = Array.isArray(data.items) ? data.items : [];
+      const count = Number(data.total) || 0;
+      if (rows.length === 0 && page > 0) {
+        setPage(Math.max(0, Math.ceil(count / PAGE_SIZE) - 1));
+        return;
+      }
       setItems(rows);
-      setTotal(rows.length);
+      setTotal(count);
     } catch (err) {
       setError(apiDetail(err, t('Could not load the pool.')));
       setItems([]);
@@ -68,7 +77,7 @@ export default function UnassignedPoolPage() {
     } finally {
       setLoading(false);
     }
-  }, [t]);
+  }, [t, page]);
 
   const loadMembers = useCallback(async () => {
     if (!canAssign) return;
@@ -89,6 +98,8 @@ export default function UnassignedPoolPage() {
     load();
   }, [load]);
 
+  useLiveRefresh(() => load({ silent: true }));
+
   useEffect(() => {
     if (canAssign) loadMembers();
   }, [canAssign, loadMembers]);
@@ -100,16 +111,12 @@ export default function UnassignedPoolPage() {
       await api.post(`/leads/${id}/claim`);
       setNoticeKind('success');
       setNotice(t('Lead claimed.'));
-      await load({ silent: true });
     } catch (err) {
       setNoticeKind('error');
-      const detail = apiDetail(err, t('Could not claim lead.'));
-      setNotice(detail);
-      if (/already assigned/i.test(detail)) {
-        await load({ silent: true });
-      }
+      setNotice(apiDetail(err, t('Could not claim lead.')));
     } finally {
       setBusyId(null);
+      announceLeadsChanged();
     }
   };
 
@@ -123,7 +130,7 @@ export default function UnassignedPoolPage() {
     setBusyId(id);
     setNotice(null);
     try {
-      await api.put(`/leads/${id}`, { assigned_to_id: assignedToId });
+      await api.put(`/leads/${id}`, { assigned_to_id: assignedToId, only_if_unassigned: true });
       setNoticeKind('success');
       setNotice(t('Lead assigned.'));
       setAssignees((prev) => {
@@ -131,12 +138,12 @@ export default function UnassignedPoolPage() {
         delete next[id];
         return next;
       });
-      await load({ silent: true });
     } catch (err) {
       setNoticeKind('error');
       setNotice(apiDetail(err, t('Could not assign lead.')));
     } finally {
       setBusyId(null);
+      announceLeadsChanged();
     }
   };
 
@@ -255,6 +262,22 @@ export default function UnassignedPoolPage() {
                 );
               })}
             </ul>
+          </div>
+        )}
+
+        {!loading && !error && total > PAGE_SIZE && (
+          <div className="flex items-center justify-between">
+            <span className="text-[12px] text-muted tabular-nums">
+              {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, total)} / {total}
+            </span>
+            <div className="flex items-center gap-2">
+              <button type="button" className="btn btn-secondary h-8 disabled:opacity-50" disabled={page === 0} onClick={() => setPage((p) => p - 1)}>
+                {t('Previous')}
+              </button>
+              <button type="button" className="btn btn-secondary h-8 disabled:opacity-50" disabled={(page + 1) * PAGE_SIZE >= total} onClick={() => setPage((p) => p + 1)}>
+                {t('Next')}
+              </button>
+            </div>
           </div>
         )}
       </div>

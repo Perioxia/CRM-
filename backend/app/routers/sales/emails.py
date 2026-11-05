@@ -12,7 +12,13 @@ from app.models.sales.email_log import EmailLog
 from app.models.sales.lead import Lead
 from app.services.sales.crm_email import deliver_and_log, serialize_email
 from app.services.sales.mailbox import get_user_mailbox, maybe_autosync
-from app.utils.dependencies import apply_company_scope, ensure_company_access, get_current_user
+from app.services.sales.lead_access import (
+    ensure_can_work_lead,
+    ensure_can_work_lead_id,
+    scope_activity_list,
+    scope_activity_rows,
+)
+from app.utils.dependencies import apply_company_scope, ensure_company_access, get_active_team_id, get_current_user
 
 router = APIRouter()
 
@@ -26,8 +32,10 @@ class EmailCreate(BaseModel):
     deal_id: Optional[int] = None
 
 
-def _get_log(db: Session, current_user: User, email_id: int) -> EmailLog:
-    row = apply_company_scope(db.query(EmailLog), EmailLog, current_user).filter(EmailLog.id == email_id).first()
+def _get_log(db: Session, current_user: User, active_team_id: Optional[int], email_id: int) -> EmailLog:
+    query = apply_company_scope(db.query(EmailLog), EmailLog, current_user)
+    query = scope_activity_rows(query, EmailLog, EmailLog.sent_by_id, db, current_user, active_team_id)
+    row = query.filter(EmailLog.id == email_id).first()
     if row is None:
         raise HTTPException(status_code=404, detail="Email not found")
     ensure_company_access(row, current_user)
@@ -39,6 +47,7 @@ def create_email(
     payload: EmailCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    active_team_id: Optional[int] = Depends(get_active_team_id),
 ):
     if current_user.company_id is None:
         raise HTTPException(status_code=403, detail="User must belong to a company")
@@ -57,6 +66,7 @@ def create_email(
         lead = apply_company_scope(db.query(Lead), Lead, current_user).filter(Lead.id == payload.lead_id).first()
         if lead is None:
             raise HTTPException(status_code=400, detail="lead_id not found in your company")
+        ensure_can_work_lead(lead, current_user, active_team_id)
         to_email = to_email or (lead.email or "").strip() or None
     if payload.client_id is not None:
         client = apply_company_scope(db.query(Client), Client, current_user).filter(Client.id == payload.client_id).first()
@@ -67,6 +77,7 @@ def create_email(
         deal = apply_company_scope(db.query(Deal), Deal, current_user).filter(Deal.id == payload.deal_id).first()
         if deal is None:
             raise HTTPException(status_code=400, detail="deal_id not found in your company")
+        ensure_can_work_lead_id(db, current_user, active_team_id, deal.lead_id)
         if lead is None and deal.lead_id:
             lead = apply_company_scope(db.query(Lead), Lead, current_user).filter(Lead.id == deal.lead_id).first()
         if client is None and deal.client_id:
@@ -97,11 +108,11 @@ def list_emails(
     deal_id: Optional[int] = Query(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    active_team_id: Optional[int] = Depends(get_active_team_id),
 ):
     maybe_autosync(db, get_user_mailbox(db, current_user.id))
     query = apply_company_scope(db.query(EmailLog), EmailLog, current_user)
-    if lead_id is not None:
-        query = query.filter(EmailLog.lead_id == lead_id)
+    query = scope_activity_list(query, EmailLog, EmailLog.sent_by_id, lead_id, db, current_user, active_team_id)
     if client_id is not None:
         query = query.filter(EmailLog.client_id == client_id)
     if deal_id is not None:
@@ -115,5 +126,6 @@ def get_email(
     email_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    active_team_id: Optional[int] = Depends(get_active_team_id),
 ):
-    return serialize_email(_get_log(db, current_user, email_id))
+    return serialize_email(_get_log(db, current_user, active_team_id, email_id))

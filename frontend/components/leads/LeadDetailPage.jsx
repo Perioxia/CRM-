@@ -21,11 +21,13 @@ import {
 import { formatDistanceToNow, parseISO } from 'date-fns';
 import { formatDistanceToTaskDue } from '../../lib/taskDue';
 import { clientsHomePath, leadsHomePath } from '../../lib/leadsPaths';
+import { announceLeadsChanged } from '../../lib/useLiveRefresh';
 import api from '../../services/api';
 import { useAuth } from '../../contexts/AuthContext';
 import TaskModal from './TaskModal';
 import NoteModal from './NoteModal';
 import ReassignModal from './ReassignModal';
+import LeadEditModal from './LeadEditModal';
 import DocumentsList from '../documents/DocumentsList';
 import LeadEmailPanel from './LeadEmailPanel';
 import LeadWhatsAppPanel from './LeadWhatsAppPanel';
@@ -45,6 +47,7 @@ export default function LeadDetailPage() {
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
   const [isNoteModalOpen, setIsNoteModalOpen] = useState(false);
   const [isReassignModalOpen, setIsReassignModalOpen] = useState(false);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [syncingClient, setSyncingClient] = useState(false);
   const [claiming, setClaiming] = useState(false);
   const [enriching, setEnriching] = useState(false);
@@ -62,15 +65,18 @@ export default function LeadDetailPage() {
 
   const applyLeadPayload = (data) => {
     const isManager = pathname.startsWith('/manager');
+    const isMd = pathname.startsWith('/md');
     const salesCreated = data.created_by_role === 'sales';
+    const ownerHasLeft = data.assignee_active === false;
     const isConvertedStatus = ['Converted'].includes(data.status);
-    const canReassign = isManager && !salesCreated && !isConvertedStatus;
+    const canReassign = !isConvertedStatus && (isMd || (isManager && (!salesCreated || ownerHasLeft)));
     data.permissions = {
       canEdit: !['Converted', 'Lost', 'Lost Client'].includes(data.status),
       canConvert: !['Converted', 'Lost', 'Lost Client'].includes(data.status),
       canAddTask: true,
       canAddNote: true,
-      canReassign
+      canReassign,
+      canSendToPool: canReassign && !!data.assigned_to_id
     };
     setLead(data);
     setCustomDraft(data.custom_fields || {});
@@ -103,7 +109,18 @@ export default function LeadDetailPage() {
       await api.put(`/leads/${id}`, { status: newStatus });
       fetchLeadData();
     } catch (err) {
-      console.error("Update status failed", err);
+      alert(err.response?.data?.detail || "Could not update the status");
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!window.confirm('Move this lead to the trash? You can restore it later.')) return;
+    try {
+      await api.delete(`/leads/${id}`);
+      announceLeadsChanged();
+      router.push(leadsHomePath(pathname));
+    } catch (err) {
+      alert(err.response?.data?.detail || 'Could not delete this lead');
     }
   };
 
@@ -112,8 +129,20 @@ export default function LeadDetailPage() {
       await api.put(`/leads/${id}`, { assigned_to_id: newOwnerId });
       setIsReassignModalOpen(false);
       fetchLeadData();
+      announceLeadsChanged();
     } catch (err) {
       alert(err.response?.data?.detail || "Failed to reassign lead");
+    }
+  };
+
+  const handleSendToPool = async () => {
+    if (!window.confirm('Send this lead back to the pool? Anyone on the team can then claim it.')) return;
+    try {
+      await api.post(`/leads/${id}/release`);
+      fetchLeadData();
+      announceLeadsChanged();
+    } catch (err) {
+      alert(err.response?.data?.detail || 'Could not send this lead back to the pool');
     }
   };
 
@@ -175,7 +204,9 @@ export default function LeadDetailPage() {
       fetchLeadData();
     } catch (err) {
       alert(err.response?.data?.detail || "Failed to claim lead");
+      fetchLeadData();
     } finally {
+      announceLeadsChanged();
       setClaiming(false);
     }
   };
@@ -230,6 +261,9 @@ export default function LeadDetailPage() {
   const missingClientRecord = isConverted && lead.converted_client_id == null;
   const isSalesPage = pathname?.startsWith('/sales');
   const isOpenLead = !lead.assigned_to_id;
+  const isLost = ['Lost', 'Lost Client'].includes(statusStr);
+  // A rep works only on leads they own; the API refuses the rest, so don't offer those buttons.
+  const canWork = !isSalesPage || Number(lead.assigned_to_id) === Number(user?.id);
 
   return ( <>
     <div className="bg-slate-50 dark:bg-slate-900 min-h-full font-sans text-slate-900 dark:text-slate-100 pb-12">
@@ -259,17 +293,17 @@ export default function LeadDetailPage() {
                 <ScoreBadge entity="leads" id={id} score={lead.score} />
               </div>
               <div className="flex items-center gap-3 mt-1 text-xs text-slate-500 dark:text-slate-400">
-                <span className="flex items-center gap-1">
-                  <Building2 size={12} /> {lead.company}
-                </span>
-                <span>•</span>
-                <span>{lead.title}</span>
+                {lead.company && (
+                  <span className="flex items-center gap-1">
+                    <Building2 size={12} /> {lead.company}
+                  </span>
+                )}
               </div>
             </div>
           </div>
 
           <div className="flex items-center gap-3">
-            {lead.enriched_at ? (
+            {!canWork ? null : lead.enriched_at ? (
               <span
                 className="px-3 py-2 text-xs font-medium text-slate-500 dark:text-slate-400"
                 title="Blank company, website, industry and LinkedIn were filled from the email or website domain"
@@ -317,7 +351,42 @@ export default function LeadDetailPage() {
                 Reassign Owner
               </button>
             )}
-            {lead.permissions?.canEdit && (
+            {lead.permissions?.canSendToPool && (
+              <button
+                onClick={handleSendToPool}
+                className="px-4 py-2 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 text-sm font-medium rounded-lg hover:bg-slate-200 dark:hover:bg-slate-600 transition-colors"
+              >
+                Back to Pool
+              </button>
+            )}
+            {canWork && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setIsEditModalOpen(true)}
+                  className="px-4 py-2 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-slate-700 dark:text-slate-200 text-sm font-medium rounded-lg hover:bg-slate-50 dark:hover:bg-slate-600 transition-colors"
+                >
+                  Edit
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDelete}
+                  className="px-4 py-2 border border-red-200 text-red-700 text-sm font-medium rounded-lg hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors"
+                >
+                  Delete
+                </button>
+              </>
+            )}
+            {canWork && isLost && (
+              <button
+                type="button"
+                onClick={() => handleUpdateStatus('Active')}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-lg shadow-sm transition-colors"
+              >
+                Reopen Lead
+              </button>
+            )}
+            {canWork && lead.permissions?.canEdit && (
               <div className="relative group">
                 <button className="px-4 py-2 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-slate-700 dark:text-slate-200 text-sm font-medium rounded-lg hover:bg-slate-50 dark:hover:bg-slate-600 transition-colors flex items-center gap-2">
                   Update Status <ChevronDown size={14} />
@@ -335,7 +404,7 @@ export default function LeadDetailPage() {
                 </div>
               </div>
             )}
-            {lead.permissions?.canConvert && (
+            {canWork && lead.permissions?.canConvert && (
               <button
                 onClick={handleConvert}
                 className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-lg shadow-sm transition-colors"
@@ -437,7 +506,7 @@ export default function LeadDetailPage() {
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-xs font-bold text-slate-500 uppercase tracking-wide">Pending Tasks</h2>
               <span className="text-[10px] bg-slate-100 px-1.5 py-0.5 rounded text-slate-500">
-                {(lead.tasks || []).filter(t => t.status === 'Open').length} Open
+                {(lead.tasks || []).filter(t => t.status !== 'Completed').length} Open
               </span>
             </div>
             <div className="space-y-1">
@@ -445,6 +514,7 @@ export default function LeadDetailPage() {
                 <div key={task.id} className="group p-2 rounded hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors cursor-pointer">
                   <div className="flex items-start gap-3">
                     <button
+                      disabled={!canWork}
                       onClick={async () => {
                         try {
                           await api.post(`/tasks/${task.id}/complete`);
@@ -473,7 +543,7 @@ export default function LeadDetailPage() {
               {(lead.tasks || []).filter(t => t.status !== 'Completed').length === 0 && (
                 <p className="text-xs text-slate-400 text-center py-3 italic">No pending tasks</p>
               )}
-              {lead.permissions?.canAddTask && (
+              {canWork && lead.permissions?.canAddTask && (
                 <button onClick={async () => {
                   const title = window.prompt('Task title:');
                   if (!title) return;
@@ -490,21 +560,33 @@ export default function LeadDetailPage() {
             </div>
           </div>
 
-          <LeadDuplicatesPanel leadId={id} onMerged={fetchLeadData} />
-          <MeetingCallPanel parentType="lead" parentId={id} onChanged={fetchLeadData} hideHistory />
-          <LeadTagsPanel leadId={id} tags={lead.tags} onChanged={fetchLeadData} />
-          <LeadEmailPanel leadId={id} leadEmail={lead.email} hideHistory onChanged={fetchLeadData} />
-          <LeadWhatsAppPanel leadId={id} leadPhone={lead.phone} hideHistory onChanged={fetchLeadData} />
+          {canWork && (
+            <>
+              <LeadDuplicatesPanel leadId={id} onMerged={fetchLeadData} />
+              <MeetingCallPanel parentType="lead" parentId={id} onChanged={fetchLeadData} hideHistory />
+              <LeadTagsPanel leadId={id} tags={lead.tags} onChanged={fetchLeadData} />
+              <LeadEmailPanel leadId={id} leadEmail={lead.email} hideHistory onChanged={fetchLeadData} />
+              <LeadWhatsAppPanel leadId={id} leadPhone={lead.phone} hideHistory onChanged={fetchLeadData} />
+            </>
+          )}
 
           {/* Section 4: Notes */}
           <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm p-5">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-xs font-bold text-slate-500 uppercase tracking-wide">Recent Notes</h2>
-              {lead.permissions?.canAddNote && (
+              {canWork && lead.permissions?.canAddNote && (
                 <button onClick={handleAddNote} className="text-xs text-blue-600 hover:underline">Add Note</button>
               )}
             </div>
             <div className="space-y-4">
+              {lead.notes && (
+                <div className="text-xs">
+                  <p className="text-slate-600 dark:text-slate-300 leading-relaxed bg-amber-50 dark:bg-amber-900/20 p-3 rounded-lg border border-amber-100 dark:border-amber-800/40 whitespace-pre-wrap">
+                    {lead.notes}
+                  </p>
+                  <div className="mt-1 px-1 text-slate-400">Added when the lead came in</div>
+                </div>
+              )}
               {lead.notes_list?.map((note) => (
                 <div key={note.id} className="text-xs">
                   <p className="text-slate-600 dark:text-slate-300 leading-relaxed bg-slate-50 dark:bg-slate-700/30 p-3 rounded-lg border border-slate-100 dark:border-slate-700/50">
@@ -516,19 +598,21 @@ export default function LeadDetailPage() {
                   </div>
                 </div>
               ))}
-              {(!lead.notes_list || lead.notes_list.length === 0) && (
+              {!lead.notes && (!lead.notes_list || lead.notes_list.length === 0) && (
                 <p className="text-xs text-slate-400 text-center py-4">No notes yet.</p>
               )}
             </div>
           </div>
 
           {/* Section: Documents */}
-          <DocumentsList 
-            entityType="lead" 
-            entityId={id} 
-            canDelete={true} 
-            canUpload={true} 
-          />
+          {canWork && (
+            <DocumentsList 
+              entityType="lead" 
+              entityId={id} 
+              canDelete={true} 
+              canUpload={true} 
+            />
+          )}
 
           {/* Section 5: Lead Details (Collapsible) */}
           <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm overflow-hidden">
@@ -588,7 +672,7 @@ export default function LeadDetailPage() {
                           )}
                         </label>
                       ))}
-                      {lead.permissions?.canEdit && (
+                      {canWork && lead.permissions?.canEdit && (
                         <button
                           type="button"
                           disabled={savingFields}
@@ -630,6 +714,12 @@ export default function LeadDetailPage() {
     onClose={() => setIsNoteModalOpen(false)}
     onRefresh={fetchLeadData}
     endpoint={`/leads/${id}/notes`}
+  />
+  <LeadEditModal
+    isOpen={isEditModalOpen}
+    onClose={() => setIsEditModalOpen(false)}
+    onSaved={fetchLeadData}
+    lead={lead}
   />
   <ReassignModal
     isOpen={isReassignModalOpen}

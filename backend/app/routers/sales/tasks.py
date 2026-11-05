@@ -7,6 +7,8 @@ from datetime import datetime, timedelta, timezone
 
 from app.database import get_db
 from app.utils.datetime_json import task_due_for_json
+from app.services.sales.lead_access import ensure_can_work_lead
+from app.services.sales.recycle import hide_deleted_lead_rows
 from app.utils.dependencies import get_current_user, apply_company_scope, ensure_company_access, get_active_team_id
 from app.models.core.user import User
 from app.models.core.team_membership import TeamMembership
@@ -243,7 +245,7 @@ def get_tasks_list(
 ):
     """Get full task list with grouping (paginated)."""
     # Base query for tasks
-    query = apply_company_scope(db.query(Task), Task, current_user)
+    query = hide_deleted_lead_rows(apply_company_scope(db.query(Task), Task, current_user), Task.lead_id)
     
     # Role-based filtering
     if _user_role_str(current_user) == "sales":
@@ -272,6 +274,8 @@ def get_tasks_list(
             )
         team_member_ids = [m[0] for m in team_members]
         query = query.filter((Task.assigned_to_id.in_(team_member_ids)) | (Task.assigned_by_id == current_user.id))
+    elif _user_role_str(current_user) == "purchase":
+        query = query.filter((Task.assigned_to_id == current_user.id) | (Task.assigned_by_id == current_user.id))
     
     if status:
         query = query.filter(Task.status == status)
@@ -340,7 +344,7 @@ def get_priority_tasks(
     today_start = datetime(now.year, now.month, now.day)
     today_end = today_start + timedelta(days=1)
     
-    task_query = apply_company_scope(db.query(Task), Task, current_user)
+    task_query = hide_deleted_lead_rows(apply_company_scope(db.query(Task), Task, current_user), Task.lead_id)
     
     # Role-based filtering
     if _user_role_str(current_user) == "sales":
@@ -414,7 +418,7 @@ def get_task(
     ensure_company_access(task, current_user)
     
     # Role-based scoping checking
-    if _user_role_str(current_user) == "sales":
+    if _user_role_str(current_user) in ("sales", "purchase"):
         if not _sales_may_access_task(db, current_user, task):
             raise HTTPException(status_code=403, detail="You do not have access to this task")
     elif _user_role_str(current_user) == "manager":
@@ -447,7 +451,8 @@ def get_task(
 def create_task(
     body: TaskCreateBody,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    active_team_id: Optional[int] = Depends(get_active_team_id),
 ):
     """Create a new task"""
     if current_user.company_id is None:
@@ -460,6 +465,7 @@ def create_task(
         lead = apply_company_scope(db.query(Lead), Lead, current_user).filter(Lead.id == body.lead_id).first()
         if not lead:
             raise HTTPException(status_code=404, detail="Lead not found")
+        ensure_can_work_lead(lead, current_user, active_team_id)
     if body.client_id:
         client = apply_company_scope(db.query(Client), Client, current_user).filter(Client.id == body.client_id).first()
         if not client:
@@ -511,7 +517,7 @@ def update_task(
     ensure_company_access(task, current_user)
     
     # Role-based editing rules
-    if _user_role_str(current_user) == "sales":
+    if _user_role_str(current_user) in ("sales", "purchase"):
         if not _sales_may_access_task(db, current_user, task):
             raise HTTPException(status_code=403, detail="You cannot edit someone else's task")
     elif _user_role_str(current_user) == "manager":
@@ -559,7 +565,7 @@ def complete_task(
     ensure_company_access(task, current_user)
     
     # Role-based scoping
-    if _user_role_str(current_user) == "sales":
+    if _user_role_str(current_user) in ("sales", "purchase"):
         if not _sales_may_access_task(db, current_user, task):
             raise HTTPException(status_code=403, detail="You do not have permission to complete this task")
     elif _user_role_str(current_user) == "manager":
@@ -598,7 +604,7 @@ def delete_task(
     ensure_company_access(task, current_user)
 
     # Role-based delete permission
-    if _user_role_str(current_user) == "sales":
+    if _user_role_str(current_user) in ("sales", "purchase"):
         if not _sales_may_access_task(db, current_user, task):
             raise HTTPException(status_code=403, detail="You can only delete your own tasks")
     elif _user_role_str(current_user) == "manager":

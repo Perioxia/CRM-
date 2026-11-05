@@ -9,6 +9,7 @@ from app.models.core.user import User
 from app.models.sales.lead import Lead
 from app.models.sales.client import Client
 from app.models.ops.document import Document
+from app.services.sales.lead_access import ensure_can_work_lead
 from app.utils.dependencies import get_current_user, apply_company_scope, ensure_company_access, get_active_team_id
 from app.utils.audit import log_activity
 from pydantic import BaseModel
@@ -75,12 +76,7 @@ def upload_document(
         if not entity:
             raise HTTPException(status_code=404, detail="Lead not found or access denied")
         
-        # Scoping: Sales must own the lead
-        if current_user.role == "sales" and entity.assigned_to_id != current_user.id:
-            raise HTTPException(status_code=403, detail="You can only upload documents to your own leads")
-        # Scoping: Manager must manage the lead's team
-        if current_user.role == "manager" and (active_team_id is None or entity.team_id != active_team_id):
-            raise HTTPException(status_code=403, detail="You can only upload documents to your team's leads")
+        ensure_can_work_lead(entity, current_user, active_team_id, "You cannot upload documents to this lead")
             
         entity_name = entity.name
         entity_type = "lead"
@@ -166,10 +162,7 @@ def download_document(
     if doc.lead_id:
         parent = db.query(Lead).filter(Lead.id == doc.lead_id).first()
         if parent:
-            if current_user.role == "sales" and parent.assigned_to_id != current_user.id:
-                raise HTTPException(status_code=403, detail="Access denied to this document")
-            if current_user.role == "manager" and (active_team_id is None or parent.team_id != active_team_id):
-                raise HTTPException(status_code=403, detail="Access denied to another team's document")
+            ensure_can_work_lead(parent, current_user, active_team_id, "Access denied to this document")
     elif doc.client_id:
         parent = db.query(Client).filter(Client.id == doc.client_id).first()
         if parent:
@@ -204,11 +197,7 @@ def get_documents(
         if not lead:
             raise HTTPException(status_code=404, detail="Lead not found")
 
-        # Scoping checks
-        if current_user.role == "sales" and lead.assigned_to_id != current_user.id:
-            raise HTTPException(status_code=403, detail="Access denied to these documents")
-        if current_user.role == "manager" and (active_team_id is None or lead.team_id != active_team_id):
-            raise HTTPException(status_code=403, detail="Access denied to another team's documents")
+        ensure_can_work_lead(lead, current_user, active_team_id, "Access denied to these documents")
 
         query = query.filter(Document.lead_id == entity_id)
     else:
@@ -253,6 +242,8 @@ def delete_document(
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
 
+    if current_user.role == "purchase" and doc.lead_id:
+        raise HTTPException(status_code=403, detail="You cannot delete this document")
     # Sales can only delete their own uploads.
     if current_user.role == "sales" and doc.uploaded_by_id != current_user.id:
         raise HTTPException(status_code=403, detail="You can only delete your own documents")

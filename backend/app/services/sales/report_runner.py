@@ -137,7 +137,7 @@ def run_leads_invoices_report(db: Session, current_user, filters: dict) -> dict:
     service_type = filters.get("service_type")
     group_by = filters.get("group_by") or "date"
 
-    lead_q = apply_company_scope(db.query(Lead), Lead, current_user)
+    lead_q = apply_company_scope(db.query(Lead), Lead, current_user).filter(Lead.deleted_at.is_(None))
     inv_q = apply_company_scope(db.query(Invoice, Lead.source, Lead.service_type), Invoice, current_user)
     inv_q = inv_q.outerjoin(Client, Invoice.client_id == Client.id).outerjoin(
         Lead, Client.converted_from_lead_id == Lead.id

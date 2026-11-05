@@ -21,6 +21,9 @@ from app.models.finance.invoice import Invoice
 from app.models.sales.task import Task
 from app.utils.dependencies import apply_company_scope, ensure_company_access
 from app.utils.helpers import normalize_email, normalize_phone
+from app.services.sales.lead_access import can_view_lead
+from app.services.sales.lead_activity import refresh_next_follow_up
+from app.services.sales.lead_ownership import claim_open_lead
 from app.utils.audit import log_activity
 
 from app.routers.sales import leads as leads_router
@@ -58,6 +61,8 @@ def _lead_access_ok_ctx(
 ) -> tuple[bool, str | None]:
     role = _ai_role(user)
     ctx_team = _ctx_team_id(context)
+    if role == "purchase":
+        return False, "Purchase users have no access to leads."
     if role == "sales" and lead.assigned_to_id != user.id:
         return False, "You can only access leads assigned to you."
     if role == "manager" and manager_needs_team:
@@ -95,6 +100,8 @@ def ai_list_company_users(db: Session, user: User, role_filter: str | None) -> d
 def ai_list_leads(db: Session, user: User, limit: int, status_filter: str | None, context: dict | None) -> dict[str, Any]:
     role = _ai_role(user)
     ctx_team = _ctx_team_id(context)
+    if role == "purchase":
+        return {"leads": []}
     q = apply_company_scope(db.query(Lead), Lead, user)
     if role == "sales":
         q = q.filter(Lead.assigned_to_id == user.id)
@@ -188,13 +195,14 @@ def ai_claim_lead(db: Session, user: User, lead_id: int, context: dict | None) -
         return {"ok": False, "summary": "Only sales users can claim leads."}
     ctx_team = _ctx_team_id(context)
     lead = _get_lead_scoped(db, user, lead_id)
-    if not lead:
+    if not lead or lead.deleted_at is not None:
         return {"ok": False, "summary": "Lead not found."}
     if lead.assigned_to_id is not None:
         return {"ok": False, "summary": "This lead is already assigned."}
-    if ctx_team is not None and lead.team_id != ctx_team:
+    if not can_view_lead(lead, user, ctx_team, db):
         return {"ok": False, "summary": "Lead does not belong to your active team."}
-    lead.assigned_to_id = user.id
+    if not claim_open_lead(db, lead, user):
+        return {"ok": False, "summary": "This lead is already assigned."}
     log_activity(db, user=user, action="claimed", entity_type="lead", entity_id=lead.id, entity_name=lead.name, after=user.full_name)
     db.commit()
     return {"lead_id": lead.id, "claimed_by": user.id}
@@ -421,6 +429,7 @@ def ai_create_follow_up(
         created_by_id=user.id,
     )
     db.add(fu)
+    refresh_next_follow_up(db, fu.lead_id)
     db.commit()
     db.refresh(fu)
     return {"follow_up_id": fu.id, "lead_id": lead_id}
@@ -446,6 +455,7 @@ def ai_complete_follow_up(db: Session, user: User, follow_up_id: int, outcome: s
     fu.status = "Completed"
     fu.outcome = oc[:5000]
     fu.completed_at = datetime.now(timezone.utc)
+    refresh_next_follow_up(db, fu.lead_id)
     db.commit()
     return {"follow_up_id": follow_up_id, "status": "Completed"}
 
@@ -483,6 +493,7 @@ def ai_reschedule_follow_up(
             return {"ok": False, "summary": "new_time must be HH:MM."}
     if reason and str(reason).strip():
         fu.notes = f"{fu.notes or ''}\n[Rescheduled: {str(reason).strip()[:500]}]"
+    refresh_next_follow_up(db, fu.lead_id)
     db.commit()
     return {"follow_up_id": follow_up_id, "scheduled_date": str(fu.scheduled_date)}
 
@@ -501,7 +512,9 @@ def ai_delete_follow_up(db: Session, user: User, follow_up_id: int, context: dic
         return {"ok": False, "summary": "You cannot delete this follow-up."}
     if role == "manager" and (ctx_team is None or lead.team_id != ctx_team):
         return {"ok": False, "summary": "Outside your team."}
+    lead_id_of_follow_up = fu.lead_id
     db.delete(fu)
+    refresh_next_follow_up(db, lead_id_of_follow_up)
     db.commit()
     return {"deleted_follow_up_id": follow_up_id}
 

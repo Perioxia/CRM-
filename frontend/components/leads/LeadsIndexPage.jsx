@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useSearchParams, usePathname } from 'next/navigation';
 import Link from 'next/link';
 import { formatDistanceToNow, parseISO, differenceInDays } from 'date-fns';
@@ -8,6 +8,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import api from '../../services/api';
 import { normalizeLeadStatus } from '../../lib/leadStatus';
 import { leadsHomePath, unassignedLeadsPath } from '../../lib/leadsPaths';
+import { announceLeadsChanged, useLiveRefresh } from '../../lib/useLiveRefresh';
 import LeadModal from './LeadModal';
 import LeadImportModal from './LeadImportModal';
 import { useImportUndo } from '../shared/CsvImportModal';
@@ -25,6 +26,8 @@ const ASSIGNMENT_TABS = [
   { id: 'all', label: 'All Leads' },
 ];
 
+const PAGE_SIZE = 50;
+
 const STATUS_STYLES = {
   'Active': 'badge-info',
   'Converted': 'badge-success',
@@ -34,11 +37,16 @@ const STATUS_STYLES = {
 export default function Leads() {
   const [activeTab, setActiveTab] = useState('claimed');
   const [leads, setLeads] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(0);
+  const [searchText, setSearchText] = useState('');
+  const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isImportOpen, setIsImportOpen] = useState(false);
   const [error, setError] = useState(null);
   const [now, setNow] = useState(null);
+  const latestRequest = useRef(0);
   
   const searchParams = useSearchParams();
   const pathname = usePathname();
@@ -58,8 +66,16 @@ export default function Leads() {
   }, [searchParams]);
 
   useEffect(() => {
+    const timer = setTimeout(() => {
+      setSearch(searchText.trim());
+      setPage(0);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchText]);
+
+  useEffect(() => {
     fetchLeads();
-  }, [activeTab, user?.id, user?.role]);
+  }, [activeTab, page, search, user?.id, user?.role]);
 
   useEffect(() => {
     api.get('/lead-forms')
@@ -89,36 +105,51 @@ export default function Leads() {
     };
   }, [user?.id, user?.role]);
 
-  const fetchLeads = async () => {
-    setLoading(true);
-    setError(null);
+  const fetchLeads = async ({ silent = false } = {}) => {
+    const request = ++latestRequest.current;
+    if (!silent) {
+      setLoading(true);
+      setError(null);
+    }
     try {
-      // Fetch all leads for this user and filter locally to avoid backend enum capitalization mismatches
-      const response = await api.get('/leads', { params: { limit: 500 } });
-      const raw = response.data?.items ?? response.data;
-      let data = Array.isArray(raw) ? raw : [];
-
-      // Normalize statuses immediately
-      data = data.map(l => ({ ...l, status: normalizeLeadStatus(l.status) }));
-
-      const ownerId = user?.id == null ? null : Number(user.id);
-      if (activeTab === 'claimed') {
-        if (user?.role === 'sales') {
-          data = data.filter((l) => l.assigned_to_id != null && Number(l.assigned_to_id) === ownerId);
-        } else {
-          data = data.filter((l) => l.assigned_to_id != null);
-        }
-      } else if (activeTab === 'open') {
-        data = data.filter((l) => l.assigned_to_id == null);
+      const response = await api.get('/leads', {
+        params: {
+          limit: PAGE_SIZE,
+          skip: page * PAGE_SIZE,
+          ...(activeTab === 'claimed' ? { claimed: true } : {}),
+          ...(activeTab === 'open' ? { unassigned: true } : {}),
+          ...(search ? { search } : {}),
+        },
+      });
+      if (request !== latestRequest.current) return;
+      const data = (response.data?.items ?? []).map((l) => ({ ...l, status: normalizeLeadStatus(l.status) }));
+      const count = Number(response.data?.total) || 0;
+      if (data.length === 0 && page > 0) {
+        setPage(Math.max(0, Math.ceil(count / PAGE_SIZE) - 1));
+        return;
       }
-
       setLeads(data);
+      setTotal(count);
     } catch (err) {
       console.error("Failed to fetch leads", err);
-      setError('Unable to load leads. Please try again.');
+      // A failed background refresh keeps the list on screen; the next one will try again.
+      if (!silent) setError('Unable to load leads. Please try again.');
     } finally {
-      setLoading(false);
+      if (request === latestRequest.current) setLoading(false);
     }
+  };
+
+  useLiveRefresh(() => fetchLeads({ silent: true }));
+
+  const handleLeadCreated = (lead) => {
+    const isOpen = lead?.assigned_to_id == null;
+    setActiveTab((tab) => {
+      if (tab === 'all') return tab;
+      return isOpen ? 'open' : 'claimed';
+    });
+    setPage(0);
+    showToast(t(isOpen ? 'Lead created. It is open for your team to claim.' : 'Lead created'), 'success');
+    announceLeadsChanged();
   };
 
   const { canUndo, undo, undoing, refreshBatch } = useImportUndo('lead', fetchLeads);
@@ -307,7 +338,10 @@ export default function Leads() {
             {ASSIGNMENT_TABS.map(tab => (
               <button
                 key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
+                onClick={() => {
+                  setActiveTab(tab.id);
+                  setPage(0);
+                }}
                 className={`px-2.5 py-1 text-[13px] font-medium rounded-md transition-colors whitespace-nowrap ${activeTab === tab.id
                   ? 'bg-primary text-surface'
                   : 'text-muted hover:bg-surface-elevated hover:text-primary'
@@ -316,6 +350,14 @@ export default function Leads() {
                 {t(tab.label)}
               </button>
             ))}
+            <input
+              type="search"
+              value={searchText}
+              onChange={(e) => setSearchText(e.target.value)}
+              placeholder={t('Search leads...')}
+              aria-label={t('Search leads...')}
+              className="ml-auto h-8 w-56 shrink-0 text-[13px] border border-border rounded-md px-2 bg-surface text-primary"
+            />
         </div>
       </div>
 
@@ -364,6 +406,11 @@ export default function Leads() {
                               <Briefcase size={11} strokeWidth={2} /> {lead.company}
                             </p>
                           )}
+                          {user?.role !== 'sales' && lead.assigned_to_name && (
+                            <p className="text-[12px] text-muted truncate mt-0.5">
+                              {t('Owner')}: {lead.assigned_to_name}
+                            </p>
+                          )}
                         </div>
                         <div className="w-[20%] flex justify-center">
                           <span className={`badge ${STATUS_STYLES[lead.status] || STATUS_STYLES['Active']}`}>
@@ -391,13 +438,26 @@ export default function Leads() {
       </div>
 
       <div className="max-w-[72rem] mx-auto px-6 mt-3 flex items-center justify-between pb-6 w-full">
-        <span className="text-[12px] text-muted tabular-nums">{filteredLeads.length} leads</span>
+        <span className="text-[12px] text-muted tabular-nums">
+          {total > PAGE_SIZE ? `${page * PAGE_SIZE + 1}–${Math.min((page + 1) * PAGE_SIZE, total)} / ` : ''}{total} {t('Leads')}
+        </span>
+        {total > PAGE_SIZE && (
+          <div className="flex items-center gap-2">
+            <button type="button" className="btn btn-secondary h-8 disabled:opacity-50" disabled={page === 0} onClick={() => setPage((p) => p - 1)}>
+              {t('Previous')}
+            </button>
+            <button type="button" className="btn btn-secondary h-8 disabled:opacity-50" disabled={(page + 1) * PAGE_SIZE >= total} onClick={() => setPage((p) => p + 1)}>
+              {t('Next')}
+            </button>
+          </div>
+        )}
       </div>
 
       <LeadModal
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
         onRefresh={fetchLeads}
+        onCreated={handleLeadCreated}
       />
       <LeadImportModal
         isOpen={isImportOpen}

@@ -21,6 +21,7 @@ from app.models.sales.client import Client
 from app.models.sales.pipeline import Pipeline, PipelineStage
 from app.services.sales.pipeline_seed import attach_default_stages, ensure_default_pipeline
 from app.services.sales.custom_fields import get_values_map, set_values
+from app.services.sales.lead_access import ensure_can_work_lead_id
 from app.services.sales.deal_views import apply_deal_view
 from app.services.sales.deal_next_activity import (
     NextActivityRequired,
@@ -169,7 +170,8 @@ def _serialize_deal(deal: Deal, stage: PipelineStage, db: Session | None = None)
 
 @router.post("", status_code=status.HTTP_201_CREATED)
 def create_deal(payload: DealCreate, db: Session = Depends(get_db),
-                current_user: User = Depends(get_current_user)):
+                current_user: User = Depends(get_current_user),
+                active_team_id: Optional[int] = Depends(get_active_team_id)):
     if payload.amount is not None and payload.amount < 0:
         raise HTTPException(status_code=400, detail="amount must be >= 0")
     if payload.probability is not None and not (0 <= payload.probability <= 100):
@@ -179,6 +181,7 @@ def create_deal(payload: DealCreate, db: Session = Depends(get_db),
         assigned_to_id=payload.assigned_to_id, team_id=payload.team_id,
         lead_id=payload.lead_id, client_id=payload.client_id,
     )
+    ensure_can_work_lead_id(db, current_user, active_team_id, payload.lead_id)
 
     pipeline_id = payload.pipeline_id
     stage_id = payload.stage_id
@@ -324,6 +327,8 @@ def update_deal(deal_id: int, payload: DealUpdate, db: Session = Depends(get_db)
         assigned_to_id=data.get("assigned_to_id"), team_id=data.get("team_id"),
         lead_id=data.get("lead_id"), client_id=data.get("client_id"),
     )
+    if data.get("lead_id") != deal.lead_id:
+        ensure_can_work_lead_id(db, current_user, active_team_id, data.get("lead_id"))
     for field, value in data.items():
         setattr(deal, field, value)
     if "amount" in data:

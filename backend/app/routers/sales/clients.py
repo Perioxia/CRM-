@@ -15,9 +15,10 @@ from app.models.finance.invoice import Invoice
 from app.models.sales.note import Note
 from app.models.sales.task import Task
 from app.services.sales.custom_fields import get_values_map, set_values
+from app.services.sales.lead_access import ensure_can_work_lead
 from app.models.sales.audit import AuditLog
 from app.models.sales.lead import Lead
-from app.schemas.sales import ClientCreate, ClientUpdate, ClientListResponse
+from app.schemas.sales import ClientCreate, ClientUpdate, ClientListResponse, NoteCreate, note_text
 from app.services.predictions.churn_service import churn_for_client
 from app.schemas.admin import MessageResponse
 from app.utils.helpers import normalize_email, normalize_phone
@@ -231,6 +232,12 @@ def create_client(
     
     # Prevent duplicate conversion from same lead
     if body.converted_from_lead_id:
+        source_lead = apply_company_scope(db.query(Lead), Lead, current_user).filter(
+            Lead.id == body.converted_from_lead_id
+        ).first()
+        if source_lead is None:
+            raise HTTPException(status_code=400, detail="converted_from_lead_id not found in your company")
+        ensure_can_work_lead(source_lead, current_user, active_team_id)
         existing = apply_company_scope(
             db.query(Client), Client, current_user
         ).filter(
@@ -506,12 +513,16 @@ def get_client_invoices(
 @router.post("/{client_id}/notes", status_code=status.HTTP_201_CREATED)
 def add_client_note(
     client_id: int,
-    content: str,
+    body: Optional[NoteCreate] = None,
+    content: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
     active_team_id: Optional[int] = Depends(get_active_team_id),
 ):
     """Add a note to a client"""
+    text = note_text(content, body)
+    if not text:
+        raise HTTPException(status_code=400, detail="Note cannot be empty")
     client = db.query(Client).filter(Client.id == client_id).first()
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
@@ -527,7 +538,7 @@ def add_client_note(
     new_note = Note(
         company_id=client.company_id,
         client_id=client_id,
-        content=content,
+        content=text,
         created_by_id=current_user.id,
     )
     db.add(new_note)

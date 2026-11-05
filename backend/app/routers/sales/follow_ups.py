@@ -6,6 +6,9 @@ from typing import Optional, List
 from datetime import datetime, date, timedelta, timezone
 
 from app.database import get_db
+from app.services.sales.lead_access import ensure_can_work_lead
+from app.services.sales.lead_activity import refresh_next_follow_up
+from app.services.sales.recycle import hide_deleted_lead_rows
 from app.utils.dependencies import get_current_user, apply_company_scope, ensure_company_access, get_active_team_id
 from app.models.core.user import User
 from app.models.core.team_membership import TeamMembership
@@ -19,7 +22,7 @@ router = APIRouter()
 
 def _role_scoped_lead_ids(db: Session, current_user: User, active_team_id: Optional[int]):
     """None means no extra filter (admin/md). Empty list means see nothing."""
-    query = apply_company_scope(db.query(Lead.id), Lead, current_user)
+    query = apply_company_scope(db.query(Lead.id), Lead, current_user).filter(Lead.deleted_at.is_(None))
     if current_user.role == "sales":
         if active_team_id is not None:
             query = query.filter(
@@ -33,10 +36,13 @@ def _role_scoped_lead_ids(db: Session, current_user: User, active_team_id: Optio
         if active_team_id is None:
             return []
         return [row.id for row in query.filter(Lead.team_id == active_team_id).all()]
+    if current_user.role == "purchase":
+        return []
     return None
 
 
 def _apply_follow_up_role_scope(query, db: Session, current_user: User, active_team_id: Optional[int]):
+    query = hide_deleted_lead_rows(query, FollowUp.lead_id)
     lead_ids = _role_scoped_lead_ids(db, current_user, active_team_id)
     if lead_ids is None:
         return query
@@ -241,15 +247,9 @@ def create_follow_up(
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
 
-    # Role-based scoping
-    if current_user.role == "sales":
-        if lead.assigned_to_id != current_user.id:
-            raise HTTPException(status_code=403, detail="You can only create follow-ups for your own leads")
-        if active_team_id is not None and lead.team_id != active_team_id:
-            raise HTTPException(status_code=403, detail="You can only create follow-ups in your active team")
-    elif current_user.role == "manager":
-        if active_team_id is None or lead.team_id != active_team_id:
-            raise HTTPException(status_code=403, detail="You can only create follow-ups for leads in your team")
+    ensure_can_work_lead(lead, current_user, active_team_id, "You cannot create follow-ups for this lead")
+    if current_user.role == "sales" and active_team_id is not None and lead.team_id != active_team_id:
+        raise HTTPException(status_code=403, detail="You can only create follow-ups in your active team")
     
     new_fu = FollowUp(
         company_id=lead.company_id,
@@ -261,6 +261,7 @@ def create_follow_up(
     )
     
     db.add(new_fu)
+    refresh_next_follow_up(db, new_fu.lead_id)
     db.commit()
     db.refresh(new_fu)
     
@@ -295,6 +296,7 @@ def update_follow_up(
     if body.notes is not None:
         fu.notes = body.notes
     
+    refresh_next_follow_up(db, fu.lead_id)
     db.commit()
     
     return {"message": f"Follow-up {follow_up_id} updated"}
@@ -319,6 +321,7 @@ def complete_follow_up(
     fu.outcome = body.outcome
     fu.completed_at = datetime.now(timezone.utc)
     
+    refresh_next_follow_up(db, fu.lead_id)
     db.commit()
     
     return {
@@ -349,6 +352,7 @@ def reschedule_follow_up(
     if body.reason:
         fu.notes = f"{fu.notes or ''}\n[Rescheduled: {body.reason}]"
     
+    refresh_next_follow_up(db, fu.lead_id)
     db.commit()
     
     return {
@@ -372,7 +376,9 @@ def delete_follow_up(
     ensure_company_access(fu, current_user)
     _assert_follow_up_lead_access(db, fu, current_user, active_team_id, "You can only delete follow-ups for leads you can access")
 
+    lead_id = fu.lead_id
     db.delete(fu)
+    refresh_next_follow_up(db, lead_id)
     db.commit()
     
     return {"message": f"Follow-up {follow_up_id} deleted"}

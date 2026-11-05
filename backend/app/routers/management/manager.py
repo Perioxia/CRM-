@@ -5,6 +5,7 @@ from typing import Optional, List
 from datetime import datetime, timedelta, timezone
 
 from app.database import get_db
+from app.services.sales.recycle import hide_deleted_lead_rows
 from app.utils.dependencies import get_current_user, apply_company_scope, ensure_company_access, is_platform_admin, get_active_team_id
 from app.models.core.user import User
 from app.models.sales.lead import Lead
@@ -12,6 +13,7 @@ from app.models.sales.task import Task
 from app.models.sales.client import Client
 from app.models.finance.invoice import Invoice
 from app.schemas.admin import MessageResponse
+from app.services.sales.lead_ownership import ensure_assignable, manager_may_move_lead, move_lead_to_owner
 from app.utils.notify import notify_role_users, send_notification
 from app.models.hr.transfer_request import TeamTransferRequest
 from app.schemas.management import TransferRequestCreate, TransferRequestResponse
@@ -97,7 +99,7 @@ def get_manager_dashboard(
 ):
     """Get manager dashboard with team metrics"""
     # Get real counts (company-scoped and team-scoped)
-    lead_query = apply_company_scope(db.query(Lead), Lead, current_user)
+    lead_query = apply_company_scope(db.query(Lead), Lead, current_user).filter(Lead.deleted_at.is_(None))
     if active_team_id is None:
         lead_query = lead_query.filter(False)
     else:
@@ -117,7 +119,7 @@ def get_manager_dashboard(
         Lead.assigned_to_id,
         func.sum(case((Lead.status == LeadStatus.CONVERTED, 1), else_=0)).label("converted_count"),
         func.sum(case((Lead.status == LeadStatus.ACTIVE, 1), else_=0)).label("active_count")
-    ), Lead, current_user)
+    ), Lead, current_user).filter(Lead.deleted_at.is_(None))
     if team_member_ids and active_team_id is not None:
         lead_stats = lead_stats.filter(Lead.team_id == active_team_id).group_by(Lead.assigned_to_id).all()
     else:
@@ -139,7 +141,7 @@ def get_manager_dashboard(
     now = _utc_now_naive()
     today_start = datetime(now.year, now.month, now.day)
     
-    task_query = apply_company_scope(db.query(Task), Task, current_user)
+    task_query = hide_deleted_lead_rows(apply_company_scope(db.query(Task), Task, current_user), Task.lead_id)
     if team_member_ids:
         task_query = task_query.filter((Task.assigned_to_id.in_(team_member_ids)) | (Task.assigned_by_id == current_user.id))
     else:
@@ -344,7 +346,7 @@ def get_team_member_detail(
         raise HTTPException(status_code=404, detail="User not found or not in your team")
     
     # Get lead counts (company-scoped)
-    lead_q = apply_company_scope(db.query(Lead), Lead, current_user)
+    lead_q = apply_company_scope(db.query(Lead), Lead, current_user).filter(Lead.deleted_at.is_(None))
     leads_contacted = lead_q.filter(Lead.assigned_to_id == user_id, Lead.status == LeadStatus.ACTIVE).count()
     leads_converted = lead_q.filter(Lead.assigned_to_id == user_id, Lead.status == LeadStatus.CONVERTED).count()
     
@@ -388,7 +390,7 @@ def get_team_leads(
     active_team_id: Optional[int] = Depends(get_active_team_id),
 ):
     """Get leads for the manager's team (paginated)."""
-    query = apply_company_scope(db.query(Lead), Lead, current_user)
+    query = apply_company_scope(db.query(Lead), Lead, current_user).filter(Lead.deleted_at.is_(None))
     if active_team_id is None:
         query = query.filter(False)
     else:
@@ -426,7 +428,7 @@ def reassign_lead(
     active_team_id: Optional[int] = Depends(get_active_team_id),
 ):
     """Reassign a lead to a different team member"""
-    lead = db.query(Lead).filter(Lead.id == lead_id).first()
+    lead = db.query(Lead).filter(Lead.id == lead_id, Lead.deleted_at.is_(None)).first()
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
     ensure_company_access(lead, current_user)
@@ -438,10 +440,8 @@ def reassign_lead(
     lead_status_val = lead.status.value if hasattr(lead.status, "value") else str(lead.status)
     if lead_status_val == "Converted":
         raise HTTPException(status_code=403, detail="Cannot reassign a converted lead")
-    if lead.created_by_id:
-        creator = db.query(User).filter(User.id == lead.created_by_id).first()
-        if creator and _role_value(creator.role) == "sales":
-            raise HTTPException(status_code=403, detail="Cannot reassign a lead created by a sales executive")
+    if not manager_may_move_lead(db, lead):
+        raise HTTPException(status_code=403, detail="Cannot reassign a lead created by a sales executive")
 
     new_assignee = (
         apply_company_scope(db.query(User), User, current_user)
@@ -451,19 +451,8 @@ def reassign_lead(
     )
     if not new_assignee:
         raise HTTPException(status_code=404, detail="Assignee not found or not in your team")
-    
-    previous_assignee_id = lead.assigned_to_id
-    lead.assigned_to_id = new_assignee_id
-    if previous_assignee_id != new_assignee_id and new_assignee_id != current_user.id:
-        send_notification(
-            db,
-            new_assignee_id,
-            title=f"Lead Reassigned: {lead.name}",
-            message=f"{current_user.full_name} reassigned this lead to you.",
-            type="info",
-            link=_lead_link_for_role(new_assignee.role, lead.id),
-            category="leads",
-        )
+    ensure_assignable(db, current_user, new_assignee_id)
+    move_lead_to_owner(db, lead, new_assignee, current_user)
     db.commit()
     
     return {
@@ -488,7 +477,7 @@ def get_team_tasks(
     active_team_id: Optional[int] = Depends(get_active_team_id),
 ):
     """Get tasks for the team (paginated)."""
-    query = apply_company_scope(db.query(Task), Task, current_user)
+    query = hide_deleted_lead_rows(apply_company_scope(db.query(Task), Task, current_user), Task.lead_id)
     # Default team scoping for managers
     team_member_ids = _active_team_member_ids(db, current_user, active_team_id)
     query = query.filter((Task.assigned_to_id.in_(team_member_ids)) | (Task.assigned_by_id == current_user.id)) if team_member_ids else query.filter(Task.assigned_by_id == current_user.id)
@@ -593,7 +582,7 @@ def get_team_performance(
     active_team_id: Optional[int] = Depends(get_active_team_id),
 ):
     """Get team performance report"""
-    lead_q = apply_company_scope(db.query(Lead), Lead, current_user)
+    lead_q = apply_company_scope(db.query(Lead), Lead, current_user).filter(Lead.deleted_at.is_(None))
     if active_team_id is None:
         lead_q = lead_q.filter(False)
     else:
@@ -617,7 +606,7 @@ def get_team_performance(
         Lead.assigned_to_id,
         func.count(Lead.id).label("total"),
         func.sum(case((Lead.status == LeadStatus.CONVERTED, 1), else_=0)).label("converted")
-    ), Lead, current_user)
+    ), Lead, current_user).filter(Lead.deleted_at.is_(None))
     lead_perf = (
         lead_perf_q.filter(Lead.team_id == active_team_id, Lead.assigned_to_id.in_(team_member_ids))
         .group_by(Lead.assigned_to_id)
@@ -741,7 +730,7 @@ def get_manager_team(
     
     team_member_ids = [m.id for m in team_members]
     
-    lead_counts = db.query(Lead.assigned_to_id, func.count(Lead.id)).filter(Lead.assigned_to_id.in_(team_member_ids)).group_by(Lead.assigned_to_id).all()
+    lead_counts = db.query(Lead.assigned_to_id, func.count(Lead.id)).filter(Lead.assigned_to_id.in_(team_member_ids), Lead.deleted_at.is_(None)).group_by(Lead.assigned_to_id).all()
     lead_map = {row[0]: row[1] for row in lead_counts}
     
     order_counts = db.query(Invoice.created_by_id, func.count(Invoice.id)).filter(Invoice.created_by_id.in_(team_member_ids)).group_by(Invoice.created_by_id).all()
@@ -783,7 +772,7 @@ def get_team_member_performance(
         raise HTTPException(status_code=404, detail="Team member not found")
         
     # Lead metrics — scoped to active team
-    lead_q = apply_company_scope(db.query(Lead), Lead, current_user).filter(Lead.assigned_to_id == user_id, Lead.team_id == active_team_id)
+    lead_q = apply_company_scope(db.query(Lead), Lead, current_user).filter(Lead.deleted_at.is_(None)).filter(Lead.assigned_to_id == user_id, Lead.team_id == active_team_id)
     total_leads = lead_q.count()
     converted_leads = lead_q.filter(Lead.status == LeadStatus.CONVERTED).count()
     lost_leads = lead_q.filter(Lead.status == LeadStatus.LOST).count()
@@ -801,7 +790,7 @@ def get_team_member_performance(
     # Task metrics — scoped to active team via lead/client
     from sqlalchemy import or_
     task_q = (
-        apply_company_scope(db.query(Task), Task, current_user)
+        hide_deleted_lead_rows(apply_company_scope(db.query(Task), Task, current_user), Task.lead_id)
         .outerjoin(Lead, Task.lead_id == Lead.id)
         .outerjoin(Client, Task.client_id == Client.id)
         .filter(

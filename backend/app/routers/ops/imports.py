@@ -28,6 +28,7 @@ from app.models.sales.deal import Deal
 from app.models.core.company_settings import CompanySettings
 from app.utils.audit import log_activity
 from app.utils.helpers import normalize_email, normalize_phone
+from app.services.sales.lead_access import user_role
 from app.services.sales.lead_import import insert_new_leads, preview_import as preview_leads
 from app.services.sales.lead_sheet import save_sheet_url, serialize_sheet, sync_sheet
 from app.services.sales.client_import import new_clients_from_preview, preview_import as preview_clients
@@ -109,25 +110,52 @@ def _commit_response(preview: dict, created_count: int) -> dict:
     }
 
 
+def _undoable_importers(db: Session, current_user: User, active_team_id: int | None) -> list[int] | None:
+    """Whose imports this user may undo: reps their own, managers their team's, MD and admin anyone's."""
+    role = user_role(current_user)
+    if role == "sales":
+        return [current_user.id]
+    if role == "manager":
+        members = (
+            apply_company_scope(db.query(TeamMembership.user_id), TeamMembership, current_user)
+            .filter(TeamMembership.team_id == active_team_id)
+            .all()
+        )
+        return [current_user.id, *(user_id for (user_id,) in members)]
+    if role == "purchase":
+        return []
+    return None
+
+
+def _reject_purchase_lead_import(current_user: User) -> None:
+    if user_role(current_user) == "purchase":
+        raise HTTPException(status_code=403, detail="Purchase users cannot import leads")
+
+
 @router.get("/last")
 def get_last_import(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    active_team_id: int | None = Depends(get_active_team_id),
 ):
     if current_user.company_id is None:
         raise HTTPException(status_code=403, detail="User must be assigned to a company")
-    return {"batch": serialize_batch(last_batch(db, current_user.company_id))}
+    importers = _undoable_importers(db, current_user, active_team_id)
+    return {"batch": serialize_batch(last_batch(db, current_user.company_id, importers))}
 
 
 @router.post("/undo")
 def undo_import(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    active_team_id: int | None = Depends(get_active_team_id),
 ):
     if current_user.company_id is None:
         raise HTTPException(status_code=403, detail="User must be assigned to a company")
     try:
-        return undo_last_batch(db, current_user.company_id)
+        return undo_last_batch(
+            db, current_user.company_id, _undoable_importers(db, current_user, active_team_id)
+        )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -139,6 +167,7 @@ def preview_leads_import(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    _reject_purchase_lead_import(current_user)
     if current_user.company_id is None:
         raise HTTPException(status_code=403, detail="User must be assigned to a company")
     try:
@@ -163,6 +192,7 @@ def commit_leads_import(
     current_user: User = Depends(get_current_user),
     active_team_id: int | None = Depends(get_active_team_id),
 ):
+    _reject_purchase_lead_import(current_user)
     if current_user.company_id is None:
         raise HTTPException(status_code=403, detail="User must be assigned to a company")
     try:
@@ -175,6 +205,7 @@ def commit_leads_import(
             team_id=team_id,
             preview=preview,
             default_source="CSV Import",
+            owner_id=current_user.id if user_role(current_user) == "sales" else None,
         )
         if created:
             db.commit()
@@ -199,6 +230,7 @@ def import_leads_text(
     current_user: User = Depends(get_current_user),
     active_team_id: int | None = Depends(get_active_team_id),
 ):
+    _reject_purchase_lead_import(current_user)
     if current_user.company_id is None:
         raise HTTPException(status_code=403, detail="User must be assigned to a company")
     contents = body.csv.encode("utf-8")
@@ -216,6 +248,7 @@ def import_leads_text(
             team_id=team_id,
             preview=preview,
             default_source="CSV Import",
+            owner_id=current_user.id if user_role(current_user) == "sales" else None,
         )
         if created:
             db.commit()
@@ -430,6 +463,7 @@ def import_leads(
     active_team_id: int | None = Depends(get_active_team_id),
 ):
     """Import leads from a CSV file"""
+    _reject_purchase_lead_import(current_user)
     if current_user.company_id is None:
         raise HTTPException(status_code=403, detail="User must be assigned to a company")
         
@@ -448,6 +482,7 @@ def import_leads(
             team_id=team_id,
             preview=preview,
             default_source="CSV Import",
+            owner_id=current_user.id if user_role(current_user) == "sales" else None,
         )
         if not created and preview["counts"]["duplicate"] == 0:
             raise HTTPException(status_code=400, detail="No valid data found in CSV.")

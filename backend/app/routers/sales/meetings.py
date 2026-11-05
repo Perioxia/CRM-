@@ -24,6 +24,8 @@ from app.services.sales.booking import (
     set_booking_config,
 )
 from app.services.sales.calendar_sync import sync_meeting_outbound
+from app.services.sales.lead_access import ensure_can_work_lead_id
+from app.services.sales.recycle import hide_deleted_lead_rows
 from app.utils.audit import log_activity
 from app.utils.datetime_json import isoformat_utc
 from app.utils.dependencies import (
@@ -71,7 +73,7 @@ def _naive_utc(dt: Optional[datetime]) -> Optional[datetime]:
 def _scoped_meetings_query(db: Session, current_user: User, active_team_id: Optional[int]):
     if _user_role_str(current_user) == "purchase":
         raise HTTPException(status_code=403, detail="Not allowed")
-    query = apply_company_scope(db.query(Meeting), Meeting, current_user)
+    query = hide_deleted_lead_rows(apply_company_scope(db.query(Meeting), Meeting, current_user), Meeting.lead_id)
     role = _user_role_str(current_user)
     if role == "sales":
         return query.outerjoin(Lead, Meeting.lead_id == Lead.id).filter(
@@ -228,8 +230,8 @@ def _serialize(meeting: Meeting, lead_name: Optional[str] = None) -> dict:
     }
 
 
-def _get_or_404(db: Session, current_user, meeting_id: int) -> Meeting:
-    meeting = apply_company_scope(db.query(Meeting), Meeting, current_user).filter(
+def _get_or_404(db: Session, current_user, active_team_id: Optional[int], meeting_id: int) -> Meeting:
+    meeting = _scoped_meetings_query(db, current_user, active_team_id).filter(
         Meeting.id == meeting_id
     ).first()
     if meeting is None:
@@ -278,11 +280,13 @@ def create_meeting(
     payload: MeetingCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    active_team_id: Optional[int] = Depends(get_active_team_id),
 ):
     require_parent_in_company(
         db, current_user,
         lead_id=payload.lead_id, client_id=payload.client_id, deal_id=payload.deal_id,
     )
+    ensure_can_work_lead_id(db, current_user, active_team_id, payload.lead_id)
     starts_at = parse_iso_datetime(payload.starts_at, "starts_at")
     if starts_at is None:
         raise HTTPException(status_code=400, detail="starts_at is required")
@@ -373,8 +377,9 @@ def get_meeting(
     meeting_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    active_team_id: Optional[int] = Depends(get_active_team_id),
 ):
-    return _serialize(_get_or_404(db, current_user, meeting_id))
+    return _serialize(_get_or_404(db, current_user, active_team_id, meeting_id))
 
 
 @router.patch("/{meeting_id:int}")
@@ -383,8 +388,9 @@ def update_meeting(
     payload: MeetingUpdate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    active_team_id: Optional[int] = Depends(get_active_team_id),
 ):
-    meeting = _get_or_404(db, current_user, meeting_id)
+    meeting = _get_or_404(db, current_user, active_team_id, meeting_id)
     data = payload.model_dump(exclude_unset=True)
     parent_keys = {"lead_id", "client_id", "deal_id"}
     if parent_keys & data.keys():
@@ -394,6 +400,8 @@ def update_meeting(
             client_id=data.get("client_id", meeting.client_id),
             deal_id=data.get("deal_id", meeting.deal_id),
         )
+        if data.get("lead_id") != meeting.lead_id:
+            ensure_can_work_lead_id(db, current_user, active_team_id, data.get("lead_id"))
     if "starts_at" in data:
         parsed = parse_iso_datetime(data["starts_at"], "starts_at")
         if parsed is None:
@@ -432,8 +440,9 @@ def delete_meeting(
     meeting_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    active_team_id: Optional[int] = Depends(get_active_team_id),
 ):
-    meeting = _get_or_404(db, current_user, meeting_id)
+    meeting = _get_or_404(db, current_user, active_team_id, meeting_id)
     sync_meeting_outbound(db, current_user, meeting, deleted=True)
     log_activity(
         db, user=current_user, action="deleted", entity_type="meeting",
