@@ -14,6 +14,7 @@ export default function AcceptInvitePage() {
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(true);
     const [accepted, setAccepted] = useState(false);
+    const [alreadyAccepted, setAlreadyAccepted] = useState(false);
 
     useEffect(() => {
         if (!token || hasAttempted.current) return;
@@ -44,11 +45,9 @@ export default function AcceptInvitePage() {
                 const detail = err.response?.data?.detail;
                 const msg = typeof detail === 'object' ? JSON.stringify(detail) : (detail || 'Failed to accept invite.');
 
-                // If already accepted, redirect to login
                 if (msg.includes('already been accepted') || msg.includes('already exists')) {
-                    setError('This invite has already been accepted. Redirecting to login...');
+                    setAlreadyAccepted(true);
                     setLoading(false);
-                    setTimeout(() => router.push('/login'), 2000);
                 } else {
                     setError(msg);
                     setLoading(false);
@@ -83,6 +82,29 @@ export default function AcceptInvitePage() {
                         </div>
                         <h2 className="text-xl font-bold text-primary mb-2">Account Created!</h2>
                         <p className="text-sm text-secondary">Your account has been set up. Redirecting to your dashboard...</p>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    if (alreadyAccepted) {
+        return (
+            <div className="min-h-screen bg-page flex items-center justify-center py-12 px-4 animate-fade-in-up">
+                <div className="max-w-md w-full">
+                    <div className="bg-surface rounded-2xl shadow-xl border border-border p-8 sm:p-10 text-center">
+                        <div className="w-16 h-16 bg-success/10 rounded-full flex items-center justify-center mx-auto mb-4">
+                            <svg className="w-8 h-8 text-success" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                            </svg>
+                        </div>
+                        <h2 className="text-xl font-bold text-primary mb-2">Invitation accepted</h2>
+                        <p className="text-sm text-secondary mb-6">
+                            Your account is ready. Log in with your email and the password you received with your invitation.
+                        </p>
+                        <Link href="/login" className="btn-primary inline-flex justify-center w-full">
+                            Go to login
+                        </Link>
                     </div>
                 </div>
             </div>
