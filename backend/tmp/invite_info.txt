@@ -1,7 +1,0 @@
-Invite found for mayanksharmarrk23@gmail.com:
-- Status: pending
-- Role: sales
-- Token: S0363TpuDaZWbHT-nUMLfzdfpdpvjdgwOB1qJhm1ZW0
-
-User does NOT exist yet. The invite needs to be accepted.
-Link: http://localhost:3000/accept-invite?token=S0363TpuDaZWbHT-nUMLfzdfpdpvjdgwOB1qJhm1ZW0
