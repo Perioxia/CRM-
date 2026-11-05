@@ -28,7 +28,7 @@ Read this file first, then [`aim-and-trajectory.md`](./aim-and-trajectory.md) fo
 | Worktree | `.worktrees/feat-phase7-trial-defense/`: an old checkout that still holds the original `docs/` folder (roadmap, plans, specs). Gitignored. |
 | Live site | `https://crm.perioxia.com` (from `testing.md`). *(Unverified: which commit is deployed. The 3 unpushed commits and migration `039_lead_sheet` are almost certainly not live.)* |
 
-**Junk in the repo root you can delete:** `main` (empty file; it also makes `git log main` ambiguous, so use `refs/heads/main`), `Untitled`, `tmp/`, `frontend/tmp_refactor_charts.js`. `backend/crm.db.bak.1788877820` is a **SQLite DB backup committed to git**. Check whether it holds real data. If it does, remove it from history.
+**Junk in the repo you can delete:** `frontend/tmp_refactor_charts.js`. `backend/crm.db.bak.1788877820` is a **SQLite DB backup committed to git**. Check whether it holds real data. If it does, remove it from history.
 
 `frontend/.env` is tracked but holds no secrets (only `BACKEND_URL=http://127.0.0.1:8000`).
 
