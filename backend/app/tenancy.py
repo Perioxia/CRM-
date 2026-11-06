@@ -138,13 +138,11 @@ def apply_rls_to_connection(connection) -> None:
     if not is_postgres_bind(connection):
         return
     if current_bypass():
-        connection.execute(text("SELECT set_config('app.bypass_rls', 'on', true)"))
-        connection.execute(text("SELECT set_config('app.company_id', '', true)"))
+        connection.execute(text("SELECT set_config('app.bypass_rls', 'on', true), set_config('app.company_id', '', true)"))
         return
     cid = current_company_id()
-    connection.execute(text("SELECT set_config('app.bypass_rls', 'off', true)"))
     connection.execute(
-        text("SELECT set_config('app.company_id', :cid, true)"),
+        text("SELECT set_config('app.bypass_rls', 'off', true), set_config('app.company_id', :cid, true)"),
         {"cid": "" if cid is None else str(int(cid))},
     )
 
