@@ -22,6 +22,7 @@ REVIEWED = {
     "app.routers.chat.rest.chat_presence",
     "app.routers.chat.rest.chat_send",
     "app.routers.chat.rest.chat_start_direct",
+    "app.routers.chat.rest.chat_start_team",
     "app.routers.chat.rest.chat_sync",
     "app.routers.chat.rest.chat_unread",
     "app.routers.sales.telephony.exotel_webhook",
