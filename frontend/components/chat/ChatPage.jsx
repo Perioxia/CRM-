@@ -81,10 +81,20 @@ export default function ChatPage() {
 
     useEffect(() => () => clearTimeout(reloadTimer.current), []);
 
-    const otherIds = useMemo(
-        () => items.map((c) => c.other_user?.id).filter(Boolean).slice(0, 200),
-        [items],
-    );
+    const otherIds = useMemo(() => {
+        const ids = [];
+        const seen = new Set();
+        for (const c of items) {
+            const people = c.kind === 'team' ? (c.members || []) : [c.other_user];
+            for (const person of people) {
+                if (person?.id && !seen.has(person.id)) {
+                    seen.add(person.id);
+                    ids.push(person.id);
+                }
+            }
+        }
+        return ids.slice(0, 200);
+    }, [items]);
     const otherIdsKey = otherIds.join(',');
 
     useEffect(() => {
@@ -129,7 +139,10 @@ export default function ChatPage() {
     const visible = useMemo(() => {
         const q = filter.trim().toLowerCase();
         if (!q) return items;
-        return items.filter((c) => (c.other_user?.full_name || '').toLowerCase().includes(q));
+        return items.filter((c) => {
+            const name = c.kind === 'team' ? c.team?.name : c.other_user?.full_name;
+            return (name || '').toLowerCase().includes(q);
+        });
     }, [items, filter]);
 
     if (availability === 'loading') {
@@ -196,56 +209,80 @@ export default function ChatPage() {
                         </div>
                     )}
                     {listState === 'ready' && items.length > 0 && visible.length === 0 && (
-                        <p className="px-4 py-8 text-center text-[13px] text-muted">{t('No people found')}</p>
+                        <p className="px-4 py-8 text-center text-[13px] text-muted">{t('No conversations found')}</p>
                     )}
-                    <ul>
-                        {visible.map((c) => {
-                            const other = c.other_user;
-                            const active = c.id === selectedId;
-                            const isTyping = typing[c.id] === other?.id;
-                            const last = c.last_message;
-                            const preview = isTyping
-                                ? t('typing…')
-                                : last?.call
-                                    ? t(callEntryLabel(last.call, myId).text)
-                                    : last
-                                    ? `${last.sender_id === myId ? `${t('You')}: ` : ''}${last.preview || (last.attachment ? t(attachmentLabel(last.attachment)) : last.preview ?? t('Message unavailable'))}`
-                                    : t('No messages yet');
-                            return (
-                                <li key={c.id}>
-                                    <button
-                                        type="button"
-                                        onClick={() => select(c.id)}
-                                        aria-current={active ? 'true' : undefined}
-                                        className={`flex w-full items-center gap-3 px-4 py-3 text-left transition-colors ${active ? 'bg-accent/10' : 'hover:bg-surface-elevated'}`}
-                                    >
-                                        <Avatar name={other?.full_name} online={online.has(other?.id)} inactive={!other?.is_active} />
-                                        <span className="min-w-0 flex-1">
-                                            <span className="flex items-baseline justify-between gap-2">
-                                                <span className={`truncate text-[13px] ${c.unread ? 'font-bold' : 'font-semibold'} text-primary`}>
-                                                    {other?.full_name || '—'}
-                                                </span>
-                                                <span className="shrink-0 text-[11px] text-muted">{c.last_message_at ? listTimeLabel(c.last_message_at) : ''}</span>
-                                            </span>
-                                            <span className="mt-0.5 flex items-center justify-between gap-2">
-                                                <span className={`truncate text-[12px] ${isTyping ? 'text-accent' : c.unread ? 'text-primary' : 'text-muted'}`}>
-                                                    {preview}
-                                                </span>
-                                                {c.unread > 0 && (
-                                                    <span className="shrink-0 rounded-full bg-accent px-1.5 py-0.5 text-[10px] font-bold leading-none text-inverse">
-                                                        {c.unread > 99 ? '99+' : c.unread}
+                    {['team', 'direct'].map((section) => {
+                        const rows = visible.filter((c) => (section === 'team' ? c.kind === 'team' : c.kind !== 'team'));
+                        if (!rows.length) return null;
+                        const showHeading = visible.some((c) => c.kind === 'team');
+                        return (
+                            <div key={section}>
+                                {showHeading && (
+                                    <p className="px-4 pb-1 pt-3 text-[11px] font-semibold uppercase tracking-wide text-muted">
+                                        {section === 'team' ? t('Teams') : t('Direct messages')}
+                                    </p>
+                                )}
+                                <ul>
+                                    {rows.map((c) => {
+                                        const isTeam = c.kind === 'team';
+                                        const other = c.other_user;
+                                        const active = c.id === selectedId;
+                                        const typingId = typing[c.id];
+                                        const isTyping = Boolean(typingId) && typingId !== myId && (isTeam || typingId === other?.id);
+                                        const last = c.last_message;
+                                        const sender = (c.members || []).find((m) => m.id === last?.sender_id);
+                                        const who = last?.sender_id === myId
+                                            ? t('You')
+                                            : (isTeam ? (sender?.full_name || '') : '');
+                                        const preview = isTyping
+                                            ? t('typing…')
+                                            : last?.call
+                                                ? t(callEntryLabel(last.call, myId).text)
+                                                : last
+                                                ? `${who ? `${who}: ` : ''}${last.preview || (last.attachment ? t(attachmentLabel(last.attachment)) : last.preview ?? t('Message unavailable'))}`
+                                                : t('No messages yet');
+                                        const title = isTeam ? (c.team?.name || t('Team')) : (other?.full_name || '—');
+                                        const meta = isTeam
+                                            ? t('{count} members').replace('{count}', String(c.team?.member_count || 0))
+                                            : (other?.is_active ? t(roleLabel(other?.role)) : t('Deactivated'));
+                                        return (
+                                            <li key={c.id}>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => select(c.id)}
+                                                    aria-current={active ? 'true' : undefined}
+                                                    className={`flex w-full items-center gap-3 px-4 py-3 text-left transition-colors ${active ? 'bg-accent/10' : 'hover:bg-surface-elevated'}`}
+                                                >
+                                                    <Avatar name={title} group={isTeam} online={!isTeam && online.has(other?.id)} inactive={!isTeam && !other?.is_active} />
+                                                    <span className="min-w-0 flex-1">
+                                                        <span className="flex items-baseline justify-between gap-2">
+                                                            <span className={`truncate text-[13px] ${c.unread ? 'font-bold' : 'font-semibold'} text-primary`}>
+                                                                {title}
+                                                            </span>
+                                                            <span className="shrink-0 text-[11px] text-muted">{c.last_message_at ? listTimeLabel(c.last_message_at) : ''}</span>
+                                                        </span>
+                                                        <span className="mt-0.5 flex items-center justify-between gap-2">
+                                                            <span className={`truncate text-[12px] ${isTyping ? 'text-accent' : c.unread ? 'text-primary' : 'text-muted'}`}>
+                                                                {preview}
+                                                            </span>
+                                                            {c.unread > 0 && (
+                                                                <span className="shrink-0 rounded-full bg-accent px-1.5 py-0.5 text-[10px] font-bold leading-none text-inverse">
+                                                                    {c.unread > 99 ? '99+' : c.unread}
+                                                                </span>
+                                                            )}
+                                                        </span>
+                                                        <span className="mt-0.5 block truncate text-[11px] text-muted">
+                                                            {meta}
+                                                        </span>
                                                     </span>
-                                                )}
-                                            </span>
-                                            <span className="mt-0.5 block truncate text-[11px] text-muted">
-                                                {other?.is_active ? t(roleLabel(other?.role)) : t('Deactivated')}
-                                            </span>
-                                        </span>
-                                    </button>
-                                </li>
-                            );
-                        })}
-                    </ul>
+                                                </button>
+                                            </li>
+                                        );
+                                    })}
+                                </ul>
+                            </div>
+                        );
+                    })}
                 </div>
             </aside>
 
@@ -254,7 +291,7 @@ export default function ChatPage() {
                     <MessageThread
                         key={selected.id}
                         conversation={selected}
-                        online={online.has(selected.other_user?.id)}
+                        onlineIds={online}
                         maxChars={maxChars}
                         files={files}
                         onBack={() => select(null)}
@@ -264,7 +301,7 @@ export default function ChatPage() {
                     <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center">
                         <MessagesSquare className="h-9 w-9 text-muted" />
                         <p className="text-[14px] font-semibold text-primary">{t('Select a chat')}</p>
-                        <p className="text-[13px] text-muted">{t('Messages are private to the two people in each chat.')}</p>
+                        <p className="max-w-sm text-[13px] text-muted">{t('Direct chats are private to two people. A team chat is visible only to people on that team.')}</p>
                     </div>
                 )}
             </section>

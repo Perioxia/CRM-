@@ -16,7 +16,8 @@ class ChatConversation(Base):
     id = Column(Integer, primary_key=True)
     company_id = Column(Integer, ForeignKey("companies.id"), nullable=False, index=True)
     kind = Column(String(16), nullable=False, default="direct")
-    # "<lower user id>:<higher user id>" — one direct conversation per pair.
+    # direct: "<lower user id>:<higher user id>" — one conversation per pair.
+    # team: "team:<team id>" — one conversation per team.
     direct_key = Column(String(64), nullable=False)
     # Per-conversation message counter, incremented under a row lock on send.
     last_seq = Column(Integer, nullable=False, default=0, server_default="0")

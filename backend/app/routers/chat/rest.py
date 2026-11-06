@@ -58,6 +58,10 @@ class StartDirectIn(BaseModel):
     user_id: int
 
 
+class StartTeamIn(BaseModel):
+    team_id: int
+
+
 class SendIn(BaseModel):
     # Typed as Any and validated by hand so a 422 never echoes the message text back.
     body: Any = None
@@ -200,6 +204,12 @@ async def chat_conversations(
 async def chat_start_direct(body: StartDirectIn, me: User = Depends(chat_user), db: Session = Depends(get_db)):
     await _limit(f"start:{me.id}", 30, 60)
     return await _db(service.get_or_create_direct, db, me, body.user_id)
+
+
+@router.post("/conversations/team")
+async def chat_start_team(body: StartTeamIn, me: User = Depends(chat_user), db: Session = Depends(get_db)):
+    await _limit(f"start:{me.id}", 30, 60)
+    return await _db(service.get_or_create_team, db, me, body.team_id)
 
 
 @router.get("/conversations/{conversation_id}")

@@ -71,6 +71,7 @@ export const chatApi = {
   conversations: (skip = 0, limit = 50) => api.get('/chat/conversations', { params: { skip, limit } }).then((r) => r.data),
   conversation: (id) => api.get(`/chat/conversations/${id}`).then((r) => r.data),
   startDirect: (userId) => api.post('/chat/conversations/direct', { user_id: userId }).then((r) => r.data),
+  startTeam: (teamId) => api.post('/chat/conversations/team', { team_id: teamId }).then((r) => r.data),
   messages: (id, params = {}) => api.get(`/chat/conversations/${id}/messages`, { params }).then((r) => r.data),
   send: (id, body, clientMsgId) => api.post(`/chat/conversations/${id}/messages`, { body, client_msg_id: clientMsgId }).then((r) => r.data),
   markRead: (id, seq) => api.post(`/chat/conversations/${id}/read`, { seq }).then((r) => r.data),

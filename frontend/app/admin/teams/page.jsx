@@ -10,7 +10,8 @@ import {
     X,
     ArrowRight,
     Shield,
-    RefreshCw
+    RefreshCw,
+    Check
 } from 'lucide-react';
 import { useNotification } from '@/contexts/NotificationContext';
 import Skeleton, { TableRowSkeleton, CardSkeleton } from '@/components/shared/Skeleton';
@@ -28,7 +29,8 @@ export default function AdminTeamsPage() {
 
     // Form state
     const [newTeamName, setNewTeamName] = useState('');
-    const [selectedNewMember, setSelectedNewMember] = useState('');
+    const [selectedMemberIds, setSelectedMemberIds] = useState([]);
+    const [memberQuery, setMemberQuery] = useState('');
     const [selectedNewManager, setSelectedNewManager] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
     const { showToast } = useNotification();
@@ -68,8 +70,27 @@ export default function AdminTeamsPage() {
         fetchTeams();
     }, []);
 
-    const availableMembers = allUsers.filter(u => !u.team);
+    const currentMemberIds = new Set(
+        (selectedTeam?.members || []).map((member) => Number(member.user_id ?? member.id))
+    );
+    const availableMembers = allUsers.filter((user) => {
+        const id = Number(user.user_id);
+        if (!id || currentMemberIds.has(id)) return false;
+        const status = String(user.status || '').toLowerCase();
+        return status !== 'disabled' && status !== 'inactive';
+    });
+    const memberSearch = memberQuery.trim().toLowerCase();
+    const visibleMembers = availableMembers.filter((user) => {
+        if (!memberSearch) return true;
+        return `${user.name || ''} ${user.role || ''}`.toLowerCase().includes(memberSearch);
+    });
     const availableManagers = allUsers.filter(u => u.role === 'Manager' || u.role === 'manager');
+
+    const toggleMember = (userId) => {
+        setSelectedMemberIds((current) =>
+            current.includes(userId) ? current.filter((id) => id !== userId) : [...current, userId]
+        );
+    };
 
     const handleRemoveMember = (member) => {
         setMemberToRemove(member);
@@ -95,23 +116,32 @@ export default function AdminTeamsPage() {
     };
 
     const confirmAddMember = async () => {
-        const userId = Number(selectedNewMember);
-        if (!userId || isNaN(userId)) {
-            alert('Please select a valid member');
-            return;
-        }
-        if (isSubmitting) return;
+        if (selectedMemberIds.length === 0 || isSubmitting) return;
         try {
             setIsSubmitting(true);
-            await api.post(`/admin/teams/${selectedTeam.id}/members`, { user_id: userId });
+            const added = [];
+            let errorDetail = null;
+            for (const userId of selectedMemberIds) {
+                try {
+                    await api.post(`/admin/teams/${selectedTeam.id}/members`, { user_id: userId });
+                    added.push(userId);
+                } catch (err) {
+                    console.error('Add member failed', err);
+                    const detail = err.response?.data?.detail;
+                    errorDetail = typeof detail === 'object' ? JSON.stringify(detail) : detail || 'Addition failed';
+                    break;
+                }
+            }
             fetchTeamDetail(selectedTeam.id);
             fetchTeams();
-            setShowAddMemberModal(false);
-            setSelectedNewMember('');
-        } catch (err) {
-            console.error('Add member failed', err);
-            const detail = err.response?.data?.detail;
-            alert(typeof detail === 'object' ? JSON.stringify(detail) : detail || 'Addition failed');
+            if (errorDetail) {
+                setSelectedMemberIds((current) => current.filter((id) => !added.includes(id)));
+                alert(errorDetail);
+            } else {
+                setShowAddMemberModal(false);
+                setSelectedMemberIds([]);
+                setMemberQuery('');
+            }
         } finally {
             setIsSubmitting(false);
         }
@@ -241,7 +271,7 @@ export default function AdminTeamsPage() {
                             <div className="flex items-center justify-between mb-4">
                                 <h3 className="text-[16px] font-semibold text-slate-900 dark:text-white">Team Members ({selectedTeam.members.length})</h3>
                                 <button
-                                    onClick={() => { setSelectedNewMember(''); setShowAddMemberModal(true); }}
+                                    onClick={() => { setSelectedMemberIds([]); setMemberQuery(''); setShowAddMemberModal(true); }}
                                     className="flex items-center gap-1 text-[12px] font-medium text-indigo-600 hover:text-indigo-700 dark:text-indigo-400"
                                 >
                                     <Plus size={14} /> Add Member
@@ -303,22 +333,62 @@ export default function AdminTeamsPage() {
             {showAddMemberModal && (
                 <Modal title="Add Member" onClose={() => setShowAddMemberModal(false)}>
                     <div className="mb-4">
-                        <label className="block text-[12px] font-medium text-slate-500 mb-1">Select Member</label>
-                        <select
-                            value={selectedNewMember}
-                            onChange={(e) => setSelectedNewMember(e.target.value)}
-                            className="w-full px-3 py-2.5 border border-slate-200 dark:border-slate-700 rounded-lg text-[14px] bg-white dark:bg-slate-800"
-                        >
-                            <option value="">Select a member...</option>
-                            {availableMembers.map(m => (
-                                <option key={m.user_id} value={m.user_id}>{m.name} ({m.role})</option>
-                            ))}
-                        </select>
+                        <input
+                            type="text"
+                            value={memberQuery}
+                            onChange={(e) => setMemberQuery(e.target.value)}
+                            placeholder="Search people"
+                            className="w-full px-3 py-2.5 border border-slate-200 dark:border-slate-700 rounded-lg text-[14px] bg-white dark:bg-slate-800 mb-2"
+                        />
+                        <div className="max-h-72 overflow-y-auto rounded-lg border border-slate-200 dark:border-slate-700">
+                            {visibleMembers.map((member) => {
+                                const checked = selectedMemberIds.includes(member.user_id);
+                                const initials = String(member.name || '?')
+                                    .split(' ')
+                                    .filter(Boolean)
+                                    .slice(0, 2)
+                                    .map((part) => part[0])
+                                    .join('')
+                                    .toUpperCase();
+                                return (
+                                    <button
+                                        key={member.user_id}
+                                        type="button"
+                                        onClick={() => toggleMember(member.user_id)}
+                                        aria-pressed={checked}
+                                        className="flex w-full items-center gap-3 px-3 py-2.5 text-left hover:bg-slate-50 dark:hover:bg-slate-800/80"
+                                    >
+                                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-indigo-100 text-[12px] font-semibold text-indigo-600 dark:bg-indigo-900/40 dark:text-indigo-300">
+                                            {initials}
+                                        </div>
+                                        <div className="min-w-0 flex-1">
+                                            <div className="truncate text-[14px] font-medium text-slate-800 dark:text-slate-100">{member.name}</div>
+                                            <div className="text-[12px] text-slate-400">{member.role}</div>
+                                        </div>
+                                        <span
+                                            className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2 ${checked
+                                                ? 'border-indigo-500 bg-indigo-500 text-white'
+                                                : 'border-slate-300 dark:border-slate-600'
+                                                }`}
+                                        >
+                                            {checked && <Check size={12} strokeWidth={3} />}
+                                        </span>
+                                    </button>
+                                );
+                            })}
+                            {visibleMembers.length === 0 && (
+                                <p className="px-3 py-8 text-center text-[13px] text-slate-400">
+                                    {availableMembers.length === 0
+                                        ? (allUsers.length === 0 ? 'No people found in this company.' : 'Everyone is already on this team.')
+                                        : 'No matches.'}
+                                </p>
+                            )}
+                        </div>
                     </div>
                     <div className="flex gap-3">
                         <button onClick={() => setShowAddMemberModal(false)} className="flex-1 px-4 py-2.5 bg-slate-100 dark:bg-slate-800 rounded-lg font-medium">Cancel</button>
-                        <button onClick={confirmAddMember} disabled={!selectedNewMember || isSubmitting} className="flex-1 px-4 py-2.5 bg-indigo-500 text-white rounded-lg font-medium disabled:opacity-50">
-                            {isSubmitting ? 'Adding...' : 'Add'}
+                        <button onClick={confirmAddMember} disabled={selectedMemberIds.length === 0 || isSubmitting} className="flex-1 px-4 py-2.5 bg-indigo-500 text-white rounded-lg font-medium disabled:opacity-50">
+                            {isSubmitting ? 'Adding...' : selectedMemberIds.length > 1 ? `Add ${selectedMemberIds.length}` : 'Add'}
                         </button>
                     </div>
                 </Modal>

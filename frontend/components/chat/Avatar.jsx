@@ -1,5 +1,6 @@
 'use client';
 
+import { Users } from 'lucide-react';
 import { initials } from '../../lib/chatFormat.cjs';
 
 const SIZES = {
@@ -7,7 +8,7 @@ const SIZES = {
     md: 'h-10 w-10 text-[13px]',
 };
 
-export default function Avatar({ name, online = false, inactive = false, size = 'md' }) {
+export default function Avatar({ name, online = false, inactive = false, size = 'md', group = false }) {
     return (
         <span className="relative inline-flex shrink-0">
             <span
@@ -16,7 +17,7 @@ export default function Avatar({ name, online = false, inactive = false, size = 
                     inactive ? 'bg-surface-elevated text-muted' : 'bg-accent-subtle text-accent'
                 }`}
             >
-                {initials(name)}
+                {group ? <Users size={size === 'sm' ? 14 : 16} /> : initials(name)}
             </span>
             {online && !inactive && (
                 <span className="absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full bg-success ring-2 ring-[var(--color-surface)]" />

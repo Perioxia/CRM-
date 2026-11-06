@@ -1,4 +1,7 @@
-"""Team chat: 1-to-1 conversations inside one company.
+"""Company chat: 1-to-1 conversations and one room per team.
+
+Team rooms are visible only to current members of that team (membership rows,
+or the user's primary team). Leaving the team removes access.
 
 Authorization lives here, not in RLS: every conversation access goes through
 `_my_participation`, which requires the caller to be a participant in their own
@@ -18,6 +21,7 @@ from sqlalchemy.orm import Session
 from app.models.core.chat import ChatAttachment, ChatCall, ChatConversation, ChatMessage, ChatParticipant
 from app.models.core.company import Company
 from app.models.core.team import Team
+from app.models.core.team_membership import TeamMembership
 from app.models.core.user import User
 from app.services.chat import files
 from app.services.chat.crypto import ChatDecryptError, decrypt_body, encrypt_body
@@ -31,6 +35,8 @@ LINKS_MAX = 100
 # Namespace for pg_advisory_xact_lock(namespace, company_id): serialises the final
 # storage-quota check of concurrent uploads in one company.
 _UPLOAD_QUOTA_LOCK = 41041
+_TEAM_KEY_PREFIX = "team:"
+_TEAM_MEMBERS_CAP = 200
 
 
 def _not_found() -> HTTPException:
@@ -70,8 +76,8 @@ def account_is_usable(db: Session, user_id: int, token_version: int | None = Non
     return user
 
 
-def _my_participation(db: Session, me: User, conversation_id: int) -> tuple[ChatConversation, ChatParticipant]:
-    row = (
+def _participation_row(db: Session, me: User, conversation_id: int):
+    return (
         db.query(ChatConversation, ChatParticipant)
         .join(ChatParticipant, ChatParticipant.conversation_id == ChatConversation.id)
         .filter(
@@ -82,9 +88,51 @@ def _my_participation(db: Session, me: User, conversation_id: int) -> tuple[Chat
         )
         .first()
     )
-    if row is None:
+
+
+def _my_participation(db: Session, me: User, conversation_id: int) -> tuple[ChatConversation, ChatParticipant]:
+    row = _participation_row(db, me, conversation_id)
+    if row is not None:
+        conv, part = row
+        if conv.kind == "team":
+            tid = team_id_from_key(conv.direct_key)
+            if tid is None or not _is_team_member(db, me, tid):
+                db.delete(part)
+                db.commit()
+                raise _not_found()
+        return row
+
+    conv = (
+        db.query(ChatConversation)
+        .filter(
+            ChatConversation.id == conversation_id,
+            ChatConversation.company_id == me.company_id,
+            ChatConversation.kind == "team",
+        )
+        .first()
+    )
+    tid = team_id_from_key(conv.direct_key) if conv is not None else None
+    if conv is None or tid is None or not _is_team_member(db, me, tid):
         raise _not_found()
-    return row
+    try:
+        with db.begin_nested():
+            part = ChatParticipant(
+                company_id=me.company_id,
+                conversation_id=conv.id,
+                user_id=me.id,
+                last_read_seq=int(conv.last_seq or 0),
+            )
+            db.add(part)
+            db.flush()
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        row = _participation_row(db, me, conversation_id)
+        if row is None:
+            raise _not_found()
+        return row
+    db.refresh(part)
+    return conv, part
 
 
 def participant_user_ids(db: Session, me: User, conversation_id: int) -> list[int]:
@@ -126,6 +174,159 @@ def _team_names(db: Session, company_id: int, team_ids: set[int]) -> dict[int, s
         return {}
     rows = db.query(Team.id, Team.name).filter(Team.company_id == company_id, Team.id.in_(team_ids))
     return {tid: name for tid, name in rows}
+
+
+def team_key(team_id: int) -> str:
+    return f"{_TEAM_KEY_PREFIX}{int(team_id)}"
+
+
+def team_id_from_key(key: str | None) -> int | None:
+    if not key or not str(key).startswith(_TEAM_KEY_PREFIX):
+        return None
+    rest = str(key)[len(_TEAM_KEY_PREFIX):]
+    if not rest.isdigit():
+        return None
+    return int(rest)
+
+
+def my_team_ids(db: Session, me: User) -> list[int]:
+    """Teams this user belongs to in their company, via membership or primary team_id."""
+    ids = {
+        tid
+        for (tid,) in db.query(TeamMembership.team_id).filter(
+            TeamMembership.company_id == me.company_id,
+            TeamMembership.user_id == me.id,
+        )
+    }
+    if me.team_id:
+        ids.add(int(me.team_id))
+    if not ids:
+        return []
+    rows = db.query(Team.id).filter(Team.company_id == me.company_id, Team.id.in_(ids))
+    return sorted(tid for (tid,) in rows)
+
+
+def _member_user_ids(db: Session, company_id: int, team_id: int) -> set[int]:
+    ids = {
+        uid
+        for (uid,) in db.query(TeamMembership.user_id).filter(
+            TeamMembership.company_id == company_id,
+            TeamMembership.team_id == team_id,
+        )
+    }
+    ids.update(
+        uid
+        for (uid,) in db.query(User.id).filter(
+            User.company_id == company_id,
+            User.team_id == team_id,
+        )
+    )
+    return ids
+
+
+def _is_team_member(db: Session, me: User, team_id: int) -> bool:
+    return team_id in my_team_ids(db, me)
+
+
+def _sync_team_members(db: Session, company_id: int, conv: ChatConversation, team_id: int) -> bool:
+    """Match participants to the team's current members. New members start caught up."""
+    wanted = _member_user_ids(db, company_id, team_id)
+    existing = db.query(ChatParticipant).filter(ChatParticipant.conversation_id == conv.id).all()
+    have = {part.user_id: part for part in existing}
+    changed = False
+    for uid, part in have.items():
+        if uid not in wanted:
+            db.delete(part)
+            changed = True
+    caught_up = int(conv.last_seq or 0)
+    for uid in wanted - set(have):
+        try:
+            with db.begin_nested():
+                db.add(ChatParticipant(
+                    company_id=company_id,
+                    conversation_id=conv.id,
+                    user_id=uid,
+                    last_read_seq=caught_up,
+                ))
+                db.flush()
+            changed = True
+        except IntegrityError:
+            continue
+    return changed
+
+
+def _load_team_conversation(db: Session, company_id: int, team_id: int) -> ChatConversation | None:
+    return (
+        db.query(ChatConversation)
+        .filter(
+            ChatConversation.company_id == company_id,
+            ChatConversation.direct_key == team_key(team_id),
+        )
+        .first()
+    )
+
+
+def ensure_team_chat(db: Session, me: User, team_id: int) -> ChatConversation:
+    """Create the team's room if needed and refresh who can see it. 404 for non-members."""
+    if not _is_team_member(db, me, team_id):
+        raise _not_found()
+    conv = _load_team_conversation(db, me.company_id, team_id)
+    created = False
+    if conv is None:
+        try:
+            conv = ChatConversation(
+                company_id=me.company_id,
+                kind="team",
+                direct_key=team_key(team_id),
+                last_seq=0,
+            )
+            db.add(conv)
+            db.flush()
+            created = True
+        except IntegrityError:
+            db.rollback()
+            conv = _load_team_conversation(db, me.company_id, team_id)
+            if conv is None:
+                raise
+    changed = _sync_team_members(db, me.company_id, conv, team_id)
+    if created or changed:
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            conv = _load_team_conversation(db, me.company_id, team_id)
+            if conv is None:
+                raise
+            _sync_team_members(db, me.company_id, conv, team_id)
+            db.commit()
+        db.refresh(conv)
+    return conv
+
+
+def refresh_my_team_chats(db: Session, me: User) -> None:
+    """Open a room for every team the caller is on, and drop rooms they have left."""
+    current = set(my_team_ids(db, me))
+    mine = (
+        db.query(ChatConversation, ChatParticipant)
+        .join(ChatParticipant, ChatParticipant.conversation_id == ChatConversation.id)
+        .filter(
+            ChatConversation.company_id == me.company_id,
+            ChatConversation.kind == "team",
+            ChatParticipant.user_id == me.id,
+            ChatParticipant.company_id == me.company_id,
+        )
+        .all()
+    )
+    dropped = False
+    for conv, part in mine:
+        tid = team_id_from_key(conv.direct_key)
+        if tid not in current:
+            db.delete(part)
+            dropped = True
+    if dropped:
+        db.commit()
+    for tid in sorted(current):
+        ensure_team_chat(db, me, tid)
 
 
 def _safe_decrypt(token: str) -> str | None:
@@ -257,6 +458,11 @@ def get_or_create_direct(db: Session, me: User, other_user_id: int) -> dict:
     return conversation_summary(db, me, conv.id)
 
 
+def get_or_create_team(db: Session, me: User, team_id: int) -> dict:
+    conv = ensure_team_chat(db, me, team_id)
+    return conversation_summary(db, me, conv.id)
+
+
 def _summaries(db: Session, me: User, conversation_ids: list[int]) -> list[dict]:
     """Batch-load summaries (fixed number of queries) for conversations `me` participates in."""
     if not conversation_ids:
@@ -272,16 +478,50 @@ def _summaries(db: Session, me: User, conversation_ids: list[int]) -> list[dict]
             ChatParticipant.company_id == me.company_id,
         )
     }
+    direct_ids = [cid for cid, (conv, _) in mine.items() if conv.kind != "team"]
+    team_ids_present = [cid for cid, (conv, _) in mine.items() if conv.kind == "team"]
     others = {
         part.conversation_id: (part, user)
         for part, user in db.query(ChatParticipant, User)
         .join(User, User.id == ChatParticipant.user_id)
         .filter(
-            ChatParticipant.conversation_id.in_(list(mine)),
+            ChatParticipant.conversation_id.in_(direct_ids or [-1]),
             ChatParticipant.user_id != me.id,
             User.company_id == me.company_id,
         )
     }
+    team_name_by_conv: dict[int, tuple] = {}
+    members_by_conv: dict[int, list[dict]] = {}
+    if team_ids_present:
+        team_lookup = _team_names(
+            db,
+            me.company_id,
+            {tid for cid in team_ids_present if (tid := team_id_from_key(mine[cid][0].direct_key))},
+        )
+        grouped: dict[int, list[User]] = {cid: [] for cid in team_ids_present}
+        member_rows = (
+            db.query(ChatParticipant.conversation_id, User)
+            .join(User, User.id == ChatParticipant.user_id)
+            .filter(
+                ChatParticipant.conversation_id.in_(team_ids_present),
+                User.company_id == me.company_id,
+            )
+            .order_by(User.full_name, User.id)
+        )
+        for cid, user in member_rows:
+            grouped.setdefault(cid, []).append(user)
+        for cid in team_ids_present:
+            tid = team_id_from_key(mine[cid][0].direct_key)
+            people = grouped.get(cid, [])
+            team_name_by_conv[cid] = (tid, team_lookup.get(tid) if tid is not None else None, len(people))
+            members_by_conv[cid] = [
+                {
+                    "id": user.id,
+                    "full_name": user.full_name,
+                    "is_active": bool(user.is_active) and getattr(user.status, "value", user.status) != "disabled",
+                }
+                for user in people[:_TEAM_MEMBERS_CAP]
+            ]
     last_messages = {
         msg.conversation_id: msg
         for msg in db.query(ChatMessage)
@@ -301,7 +541,14 @@ def _summaries(db: Session, me: User, conversation_ids: list[int]) -> list[dict]
         if cid not in mine:
             continue
         conv, part = mine[cid]
-        other_part, other_user = others.get(cid, (None, None))
+        is_team = conv.kind == "team"
+        other_part, other_user = (None, None) if is_team else others.get(cid, (None, None))
+        team_out = None
+        members = []
+        if is_team:
+            tid, name, count = team_name_by_conv.get(cid, (None, None, 0))
+            members = members_by_conv.get(cid, [])
+            team_out = {"id": tid, "name": name or "Team", "member_count": count}
         last = None
         msg = last_messages.get(cid)
         if msg is not None:
@@ -319,7 +566,9 @@ def _summaries(db: Session, me: User, conversation_ids: list[int]) -> list[dict]
         out.append({
             "id": conv.id,
             "kind": conv.kind,
-            "other_user": _user_card(other_user, teams),
+            "team": team_out,
+            "members": members if is_team else [],
+            "other_user": None if is_team else _user_card(other_user, teams),
             "last_seq": conv.last_seq,
             "last_read_seq": part.last_read_seq,
             "other_last_read_seq": other_part.last_read_seq if other_part else 0,
@@ -338,6 +587,7 @@ def conversation_summary(db: Session, me: User, conversation_id: int) -> dict:
 def list_conversations(db: Session, me: User, skip: int, limit: int) -> dict:
     limit = max(1, min(int(limit), CONVERSATION_PAGE_MAX))
     skip = max(0, int(skip))
+    refresh_my_team_chats(db, me)
     base = (
         db.query(ChatConversation.id)
         .join(ChatParticipant, ChatParticipant.conversation_id == ChatConversation.id)
@@ -347,17 +597,18 @@ def list_conversations(db: Session, me: User, skip: int, limit: int) -> dict:
             ChatParticipant.company_id == me.company_id,
         )
     )
-    total = base.count()
-    ids = [
-        r[0]
-        for r in base.order_by(
-            ChatConversation.last_message_at.is_(None),
-            ChatConversation.last_message_at.desc(),
-            ChatConversation.id.desc(),
-        )
-        .offset(skip)
-        .limit(limit)
-    ]
+    order = (
+        ChatConversation.last_message_at.is_(None),
+        ChatConversation.last_message_at.desc(),
+        ChatConversation.id.desc(),
+    )
+    direct = base.filter(ChatConversation.kind != "team")
+    teams = base.filter(ChatConversation.kind == "team")
+    total = direct.count() + teams.count()
+    direct_ids = [r[0] for r in direct.order_by(*order).offset(skip).limit(limit)]
+    # Team rooms stay on the first page so a busy direct list cannot hide them.
+    team_ids = [r[0] for r in teams.order_by(*order).limit(100)] if skip == 0 else []
+    ids = team_ids + direct_ids
     return {"items": _summaries(db, me, ids), "total": total, "skip": skip, "limit": limit}
 
 
@@ -502,9 +753,15 @@ def send_message(
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="client_msg_id already used")
         return _messages_out(db, [existing], me)[0], False
 
-    other = _other_participant(db, conv.id, me)
-    if other is None or not other.is_active or getattr(other.status, "value", other.status) == "disabled":
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This user is deactivated")
+    if conv.kind == "team":
+        tid = team_id_from_key(conv.direct_key)
+        if tid is None:
+            raise _not_found()
+        _sync_team_members(db, me.company_id, conv, tid)
+    else:
+        other = _other_participant(db, conv.id, me)
+        if other is None or not other.is_active or getattr(other.status, "value", other.status) == "disabled":
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This user is deactivated")
 
     ciphertext, key_id = encrypt_body(body)
     attachment = None

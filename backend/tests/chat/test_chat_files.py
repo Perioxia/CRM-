@@ -13,6 +13,8 @@ from fastapi.testclient import TestClient
 from app.config import settings
 from app.main import app
 from app.models.core.chat import ChatAttachment, ChatMessage
+from app.models.core.team import Team
+from app.models.core.team_membership import TeamMembership
 from app.routers.chat import files as files_router
 from app.services.billing.seed import seed_plans
 from app.services.chat import files, filetypes, service
@@ -151,6 +153,30 @@ def test_photo_round_trip(chat, db):
     assert caption not in db.query(ChatMessage).filter(ChatMessage.id == msg["id"]).one().body_enc
     assert stored(chat["root"]) == [row.stored_name]
     assert temp_files(chat["root"]) == []
+
+
+def test_team_room_upload_uses_the_callers_team(chat, db):
+    """Upload auth copies a plain caller; team rooms still need team_id for membership."""
+    org = chat["org"]
+    team = Team(company_id=org["a"].id, name="Floor")
+    db.add(team)
+    db.flush()
+    sales_user = org["users"]["sales"]
+    sales_user.team_id = team.id
+    db.add(TeamMembership(company_id=org["a"].id, team_id=team.id, user_id=sales_user.id))
+    db.commit()
+
+    opened = chat["sales"].post("/api/chat/conversations/team", json={"team_id": team.id})
+    assert opened.status_code == 200, opened.text
+    res = upload(
+        upload_token(chat["sales"]),
+        opened.json()["id"],
+        PDF,
+        filename="notes.pdf",
+        content_type="application/pdf",
+    )
+    assert res.status_code == 201, res.text
+    assert res.json()["attachment"]["filename"] == "notes.pdf"
 
 
 def test_document_downloads_as_attachment_and_supports_range(chat):

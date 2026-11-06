@@ -33,6 +33,8 @@ def create_call(db: Session, caller: User, conversation_id: int) -> ChatCall:
     """Start a call log row (status ringing). 404 unless `caller` takes part in the conversation;
     409 if the other person is deactivated."""
     conv, _ = service._my_participation(db, caller, conversation_id)
+    if conv.kind != "direct":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Voice calls are only available in direct chats")
     callee = service._other_participant(db, conv.id, caller)
     if not _is_usable(callee):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This user is deactivated")

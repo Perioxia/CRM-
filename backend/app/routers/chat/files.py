@@ -52,7 +52,12 @@ def _caller(db: Session, user_id: int, token_version: int):
         user = service.account_is_usable(db, user_id, token_version)
         if user is None:
             return None
-        return SimpleNamespace(id=user.id, company_id=user.company_id, token_version=int(user.token_version or 0))
+        return SimpleNamespace(
+            id=user.id,
+            company_id=user.company_id,
+            token_version=int(user.token_version or 0),
+            team_id=user.team_id,
+        )
     finally:
         db.rollback()
 

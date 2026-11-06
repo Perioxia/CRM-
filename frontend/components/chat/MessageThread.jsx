@@ -25,13 +25,25 @@ function lastConfirmedSeq(messages) {
     return 0;
 }
 
-export default function MessageThread({ conversation, online, maxChars, files, onBack, onActivity }) {
+export default function MessageThread({ conversation, onlineIds, maxChars, files, onBack, onActivity }) {
     const t = useT();
     const { myId, live, typing, subscribe, requestReconcile, sendTyping } = useChat();
     const { callsEnabled, canCall, startCall } = useCall();
     const conversationId = conversation.id;
+    const isTeam = conversation.kind === 'team';
     const other = conversation.other_user;
     const otherActive = Boolean(other?.is_active);
+    const canCompose = isTeam || otherActive;
+    const membersById = useMemo(() => {
+        const map = new Map();
+        for (const member of conversation.members || []) map.set(member.id, member);
+        return map;
+    }, [conversation.members]);
+    const online = onlineIds instanceof Set ? onlineIds : new Set();
+    const peerOnline = !isTeam && online.has(other?.id);
+    const teamOnline = isTeam
+        ? (conversation.members || []).filter((m) => m.id !== myId && m.is_active && online.has(m.id)).length
+        : 0;
 
     const [messages, setMessages] = useState([]);
     const [loadState, setLoadState] = useState('loading');
@@ -329,28 +341,44 @@ export default function MessageThread({ conversation, online, maxChars, files, o
         }
         return 0;
     }, [messages, myId]);
-    const isTyping = typing[conversationId] === other?.id;
+    const typingId = typing[conversationId];
+    const isTyping = Boolean(typingId) && typingId !== myId && (isTeam || typingId === other?.id);
+    const typingName = membersById.get(typingId)?.full_name;
 
     return (
-        <section className="flex h-full min-h-0 flex-col bg-page" aria-label={other?.full_name || t('Chat')}>
+        <section className="flex h-full min-h-0 flex-col bg-page" aria-label={isTeam ? (conversation.team?.name || t('Team')) : (other?.full_name || t('Chat'))}>
             <header className="flex items-center gap-3 border-b border-border bg-surface px-4 py-3">
                 {onBack && (
                     <button type="button" onClick={onBack} className="-ml-1 rounded p-1 text-muted hover:text-primary md:hidden" aria-label={t('Back')}>
                         <ArrowLeft size={18} />
                     </button>
                 )}
-                <Avatar name={other?.full_name} online={online} inactive={!otherActive} />
+                <Avatar
+                    name={isTeam ? conversation.team?.name : other?.full_name}
+                    group={isTeam}
+                    online={peerOnline}
+                    inactive={!isTeam && !otherActive}
+                />
                 <div className="min-w-0">
-                    <p className="truncate text-[14px] font-semibold text-primary">{other?.full_name || '—'}</p>
+                    <p className="truncate text-[14px] font-semibold text-primary">
+                        {isTeam ? (conversation.team?.name || t('Team')) : (other?.full_name || '—')}
+                    </p>
                     <p className="truncate text-[12px] text-muted">
-                        {!otherActive
-                            ? t('Deactivated')
-                            : isTyping
-                                ? t('typing…')
-                                : [t(roleLabel(other?.role)), other?.team, online ? t('Online') : null].filter(Boolean).join(' · ')}
+                        {isTeam
+                            ? (isTyping
+                                ? (typingName ? `${typingName} · ${t('typing…')}` : t('typing…'))
+                                : [
+                                    t('{count} members').replace('{count}', String(conversation.team?.member_count || (conversation.members || []).length)),
+                                    teamOnline > 0 ? t('{count} online').replace('{count}', String(teamOnline)) : null,
+                                ].filter(Boolean).join(' · '))
+                            : (!otherActive
+                                ? t('Deactivated')
+                                : isTyping
+                                    ? t('typing…')
+                                    : [t(roleLabel(other?.role)), other?.team, peerOnline ? t('Online') : null].filter(Boolean).join(' · '))}
                     </p>
                 </div>
-                {callsEnabled && (
+                {!isTeam && callsEnabled && (
                     <button
                         type="button"
                         onClick={() => startCall(conversation)}
@@ -378,8 +406,10 @@ export default function MessageThread({ conversation, online, maxChars, files, o
                 )}
                 {loadState === 'ready' && messages.length === 0 && (
                     <div className="flex h-full flex-col items-center justify-center gap-2 text-center">
-                        <Avatar name={other?.full_name} inactive={!otherActive} />
-                        <p className="text-[13px] text-muted">{t('Say hello to start the conversation.')}</p>
+                        <Avatar name={isTeam ? conversation.team?.name : other?.full_name} group={isTeam} inactive={!isTeam && !otherActive} />
+                        <p className="text-[13px] text-muted">
+                            {isTeam ? t('This chat is only for people on this team.') : t('Say hello to start the conversation.')}
+                        </p>
                     </div>
                 )}
                 {loadState === 'ready' && messages.length > 0 && (
@@ -400,8 +430,12 @@ export default function MessageThread({ conversation, online, maxChars, files, o
                                 </div>
                                 {day.runs.map((run) => {
                                     const mine = run.sender_id === myId;
+                                    const senderName = membersById.get(run.sender_id)?.full_name;
                                     return (
                                         <div key={`${run.messages[0].seq ?? run.messages[0].client_msg_id}`} className={`flex flex-col gap-0.5 ${mine ? 'items-end' : 'items-start'}`}>
+                                            {isTeam && !mine && !run.messages[0].call && (
+                                                <span className="px-1 text-[11px] font-medium text-muted">{senderName || t('Teammate')}</span>
+                                            )}
                                             {run.messages.map((m, idx) => {
                                                 const last = idx === run.messages.length - 1;
                                                 if (m.call) {
@@ -459,7 +493,7 @@ export default function MessageThread({ conversation, online, maxChars, files, o
                                                                 ) : (
                                                                     <>
                                                                         <span>{timeLabel(m.created_at)}</span>
-                                                                        {mine && m.seq === lastMineSeq && (
+                                                                        {mine && !isTeam && m.seq === lastMineSeq && (
                                                                             otherLastRead >= m.seq
                                                                                 ? <span className="inline-flex items-center gap-0.5 text-accent"><CheckCheck size={13} /> {t('Seen')}</span>
                                                                                 : <Check size={13} aria-label={t('Sent')} />
@@ -501,7 +535,7 @@ export default function MessageThread({ conversation, online, maxChars, files, o
                 </div>
             )}
 
-            {otherActive ? (
+            {canCompose ? (
                 <Composer
                     conversationId={conversationId}
                     maxChars={maxChars}
