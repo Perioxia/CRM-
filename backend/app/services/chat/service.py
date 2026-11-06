@@ -14,7 +14,7 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import HTTPException, status
-from sqlalchemy import func, text, update
+from sqlalchemy import func, or_, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -191,18 +191,14 @@ def team_id_from_key(key: str | None) -> int | None:
 
 def my_team_ids(db: Session, me: User) -> list[int]:
     """Teams this user belongs to in their company, via membership or primary team_id."""
-    ids = {
-        tid
-        for (tid,) in db.query(TeamMembership.team_id).filter(
+    member_of = Team.id.in_(
+        select(TeamMembership.team_id).where(
             TeamMembership.company_id == me.company_id,
             TeamMembership.user_id == me.id,
         )
-    }
-    if me.team_id:
-        ids.add(int(me.team_id))
-    if not ids:
-        return []
-    rows = db.query(Team.id).filter(Team.company_id == me.company_id, Team.id.in_(ids))
+    )
+    on_team = or_(member_of, Team.id == int(me.team_id)) if me.team_id else member_of
+    rows = db.query(Team.id).filter(Team.company_id == me.company_id, on_team)
     return sorted(tid for (tid,) in rows)
 
 
@@ -270,7 +266,11 @@ def ensure_team_chat(db: Session, me: User, team_id: int) -> ChatConversation:
     """Create the team's room if needed and refresh who can see it. 404 for non-members."""
     if not _is_team_member(db, me, team_id):
         raise _not_found()
-    conv = _load_team_conversation(db, me.company_id, team_id)
+    return _ensure_team_room(db, me, team_id, _load_team_conversation(db, me.company_id, team_id))
+
+
+def _ensure_team_room(db: Session, me: User, team_id: int, conv: ChatConversation | None) -> ChatConversation:
+    """ensure_team_chat for a team the caller is known to be on, given its room if already loaded."""
     created = False
     if conv is None:
         try:
@@ -318,15 +318,20 @@ def refresh_my_team_chats(db: Session, me: User) -> None:
         .all()
     )
     dropped = False
+    rooms: dict[int, ChatConversation] = {}
     for conv, part in mine:
         tid = team_id_from_key(conv.direct_key)
         if tid not in current:
             db.delete(part)
             dropped = True
+        else:
+            rooms[tid] = conv
     if dropped:
         db.commit()
+        rooms = {}
     for tid in sorted(current):
-        ensure_team_chat(db, me, tid)
+        room = rooms[tid] if tid in rooms else _load_team_conversation(db, me.company_id, tid)
+        _ensure_team_room(db, me, tid, room)
 
 
 def _safe_decrypt(token: str) -> str | None:
@@ -490,14 +495,15 @@ def _summaries(db: Session, me: User, conversation_ids: list[int]) -> list[dict]
             User.company_id == me.company_id,
         )
     }
+    teams = _team_names(
+        db,
+        me.company_id,
+        {tid for cid in team_ids_present if (tid := team_id_from_key(mine[cid][0].direct_key))}
+        | {u.team_id for _, u in others.values() if u.team_id},
+    )
     team_name_by_conv: dict[int, tuple] = {}
     members_by_conv: dict[int, list[dict]] = {}
     if team_ids_present:
-        team_lookup = _team_names(
-            db,
-            me.company_id,
-            {tid for cid in team_ids_present if (tid := team_id_from_key(mine[cid][0].direct_key))},
-        )
         grouped: dict[int, list[User]] = {cid: [] for cid in team_ids_present}
         member_rows = (
             db.query(ChatParticipant.conversation_id, User)
@@ -513,7 +519,7 @@ def _summaries(db: Session, me: User, conversation_ids: list[int]) -> list[dict]
         for cid in team_ids_present:
             tid = team_id_from_key(mine[cid][0].direct_key)
             people = grouped.get(cid, [])
-            team_name_by_conv[cid] = (tid, team_lookup.get(tid) if tid is not None else None, len(people))
+            team_name_by_conv[cid] = (tid, teams.get(tid) if tid is not None else None, len(people))
             members_by_conv[cid] = [
                 {
                     "id": user.id,
@@ -531,7 +537,6 @@ def _summaries(db: Session, me: User, conversation_ids: list[int]) -> list[dict]
         )
         .filter(ChatConversation.id.in_(list(mine)))
     }
-    teams = _team_names(db, me.company_id, {u.team_id for _, u in others.values() if u.team_id})
     last_ids = [m.id for m in last_messages.values()]
     last_attachments = _attachments_for(db, last_ids)
     last_calls = _calls_for(db, last_ids)
@@ -604,7 +609,7 @@ def list_conversations(db: Session, me: User, skip: int, limit: int) -> dict:
     )
     direct = base.filter(ChatConversation.kind != "team")
     teams = base.filter(ChatConversation.kind == "team")
-    total = direct.count() + teams.count()
+    total = base.count()
     direct_ids = [r[0] for r in direct.order_by(*order).offset(skip).limit(limit)]
     # Team rooms stay on the first page so a busy direct list cannot hide them.
     team_ids = [r[0] for r in teams.order_by(*order).limit(100)] if skip == 0 else []
