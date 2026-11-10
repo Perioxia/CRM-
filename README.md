@@ -100,9 +100,11 @@ Schema is defined and evolved via **Alembic** under `backend/alembic/` (no separ
 ## 🏁 Getting Started
 
 ### Prerequisites
-- Python 3.11+
-- PostgreSQL 14+
-- Node.js 18+
+Production, CI and local development use the same versions:
+- Python 3.14.4 (`.python-version`)
+- Node.js 24.22.2 (`.nvmrc`)
+- PostgreSQL 17.11
+- Redis 8.0.5 (team chat)
 
 ### 1. Backend Setup
 ```bash
