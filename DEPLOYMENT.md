@@ -5,7 +5,7 @@ Production is one Ubuntu 26.04 server behind crm.perioxia.com: nginx → Next.js
 ## How a change goes live
 
 1. Merge a pull request into `main`. The **Tests** workflow runs.
-2. If Tests pass, the **Deploy** workflow starts and waits for approval: Actions → Deploy → *Review deployments* → *Approve*. Pick a quiet time; a backend restart drops chat and calls for a few seconds.
+2. If Tests pass, the **Deploy** workflow starts and waits for approval: Actions → Deploy → *Review deployments* → *Approve*. Pick a quiet time; a backend restart drops chat and calls for a few seconds. Nothing goes live until you approve. If several merges are waiting, handle the run marked *Waiting* first (approve or reject it); the newest one queued behind it asks next, and runs in between are skipped.
 3. GitHub connects to the server with a key that can only run `deploy/gate.sh`, which runs `deploy/deploy.sh` from the commit being deployed.
 4. `deploy.sh` checks the server, builds and test-runs the website in a separate folder (port 3001), switches the live site, checks again, and rolls back by itself if any check fails.
 
