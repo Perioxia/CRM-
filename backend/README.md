@@ -5,7 +5,7 @@ Professional FastAPI backend for the CRM application.
 ## Setup
 
 ### Prerequisites
-- Python 3.10+
+- Python 3.14.4 (see `.python-version` in the repo root)
 - PostgreSQL (or SQLite for development)
 
 ### Installation

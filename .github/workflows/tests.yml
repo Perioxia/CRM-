@@ -14,11 +14,12 @@ concurrency:
 
 jobs:
   backend:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 25
     services:
+      # Same versions as production: Neon PostgreSQL 17.11, Redis 8.0.5 on the server.
       postgres:
-        image: postgres:17
+        image: postgres:17.11
         env:
           POSTGRES_USER: ci
           POSTGRES_PASSWORD: ci
@@ -31,7 +32,7 @@ jobs:
           --health-timeout 5s
           --health-retries 20
       redis:
-        image: redis:7.0.15
+        image: redis:8.0.5
         ports:
           - 6379:6379
         options: >-
@@ -51,13 +52,29 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: "3.12.3"
-          cache: pip
-          cache-dependency-path: backend/requirements.txt
+      # Ubuntu's own Python 3.14 package, the same build the production server runs.
+      - name: Set up Python
+        run: |
+          /usr/bin/python3.14 -m venv "$RUNNER_TEMP/venv"
+          echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
       - name: Install dependencies
         run: pip install -r requirements.txt
+      # A patch-level Python difference only warns: a runner image update should not block every merge.
+      - name: Check versions
+        env:
+          PGPASSWORD: ci
+        run: |
+          fail=0
+          want_py=$(cat ../.python-version)
+          have_py=$(python -c 'import platform; print(platform.python_version())')
+          if [ "$have_py" = "$want_py" ]; then echo "Python $have_py"
+          elif [ "${have_py%.*}" = "${want_py%.*}" ]; then echo "::warning::Python is $have_py on this runner, production runs $want_py"
+          else echo "::error::Python is $have_py, expected $want_py"; fail=1; fi
+          have_pg=$(psql -h 127.0.0.1 -U ci -d crm_ci_test -tAc 'SHOW server_version' | cut -d' ' -f1)
+          if [ "$have_pg" = "17.11" ]; then echo "PostgreSQL $have_pg"; else echo "::error::PostgreSQL is $have_pg, expected 17.11"; fail=1; fi
+          have_redis=$(python -c "import os, redis; print(redis.Redis.from_url(os.environ['CHAT_REDIS_TEST_URL']).info()['redis_version'])")
+          if [ "$have_redis" = "8.0.5" ]; then echo "Redis $have_redis"; else echo "::error::Redis is $have_redis, expected 8.0.5"; fail=1; fi
+          exit $fail
       - name: Migrate the test database
         env:
           DATABASE_URL: postgresql+psycopg://ci:ci@127.0.0.1:5432/crm_ci_test
@@ -73,7 +90,7 @@ jobs:
           python -m pytest tests/sales/test_lead_access.py tests/sales/test_lead_claim.py tests/sales/test_lead_data.py tests/sales/test_lead_screens.py -q -p no:cacheprovider -rsx
 
   frontend:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     defaults:
       run:
@@ -86,9 +103,14 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "24"
+          node-version-file: .nvmrc
           cache: npm
           cache-dependency-path: frontend/package-lock.json
+      - name: Check versions
+        run: |
+          want=$(cat ../.nvmrc); have=$(node -p 'process.versions.node')
+          if [ "$have" != "$want" ]; then echo "::error::Node is $have, expected $want"; exit 1; fi
+          echo "Node $have, npm $(npm -v)"
       # The repo root is an npm workspace whose lockfile only lists Windows binaries;
       # --workspaces=false makes npm use frontend/package-lock.json (all platforms).
       - name: Install dependencies
