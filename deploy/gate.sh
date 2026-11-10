@@ -15,7 +15,7 @@ mkdir $RUN 2>/dev/null || { echo "refused: another run started this second"; exi
 git -C $REPO show "$SHA:deploy/deploy.sh" > $RUN/deploy.sh || { echo "no deploy/deploy.sh in $SHA"; exit 1; }
 bash -n $RUN/deploy.sh || { echo "refused: deploy/deploy.sh in $SHA does not parse"; exit 1; }
 : > $RUN/run.log
-setsid nohup flock -n -E 75 /home/ubuntu/deploy/.deploy.lock bash $RUN/deploy.sh "$MODE" "$SHA" "$RUN" >> $RUN/run.log 2>&1 < /dev/null &
+setsid nohup flock -n -o -E 75 /home/ubuntu/deploy/.deploy.lock bash $RUN/deploy.sh "$MODE" "$SHA" "$RUN" >> $RUN/run.log 2>&1 < /dev/null &
 PID=$!
 tail -n +1 -f --pid=$PID $RUN/run.log
 wait $PID
