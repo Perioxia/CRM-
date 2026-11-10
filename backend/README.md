@@ -41,6 +41,8 @@ cp .env.example .env
 alembic upgrade head
 ```
 
+New migrations: `alembic revision --autogenerate` also picks up old, known differences between the models and the database (listed in `tests/ops/schema_drift_baseline.txt`), including indexes it would drop. Keep only the operations for your change. CI fails if the models and migrations stop matching that list.
+
 6. Run development server (local only; do not use in production):
 ```bash
 uvicorn app.main:app --reload --port 8000
