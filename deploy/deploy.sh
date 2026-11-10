@@ -83,7 +83,11 @@ if [ $WEB = yes ]; then
   TRIAL_ERRS=$(grep -ciE 'error|exception|unhandled' $D/trial.log)
   [ "$(ps -o pgid= -p $TRIAL_PGID | tr -d ' ')" = "$TRIAL_PGID" ] && kill -TERM -- -$TRIAL_PGID 2>/dev/null
   for i in $(seq 1 20); do port_busy 3001 || break; sleep 1; done
-  port_busy 3001 && stop "the test-run website on port 3001 did not stop (process group $TRIAL_PGID)"
+  if port_busy 3001; then
+    LEFT=$(port_pid 3001)
+    [ "$(sudo readlink -f /proc/$LEFT/cwd)" = "$D/src/frontend" ] && kill -KILL "$LEFT" 2>/dev/null && sleep 1
+    port_busy 3001 && stop "the test-run website on port 3001 did not stop (pid $LEFT)"
+  fi
   [ "$TRIAL" = "$EXPECTED_PAGES" ] || stop "the test run on port 3001 returned $TRIAL"
   [ "$TRIAL_BUILD" = "ok" ] || stop "the test run did not serve the new build"
   [ "$TRIAL_ERRS" = "0" ] || stop "$TRIAL_ERRS error lines in the test run ($D/trial.log)"
@@ -110,7 +114,7 @@ rollback() {
   git -C $R reset -q --hard "$OLD"
   [ -d $D/next.prev ] && { rm -rf $F/.next; mv $D/next.prev $F/.next; }
   [ -d $D/node_modules.prev ] && { rm -rf $F/node_modules; mv $D/node_modules.prev $F/node_modules; }
-  [ $API = yes ] && sudo systemctl restart crm-backend
+  [ $API_RESTARTED = yes ] && sudo systemctl restart crm-backend
   [ $WEB = yes ] && sudo systemctl start crm-frontend
   wait_for http://127.0.0.1:8000/health; wait_for http://127.0.0.1:3000/login
   NOW=$(git -C $R rev-parse --short HEAD); NOW_PAGES=$(pages http://127.0.0.1:3000); NOW_BUILD=$(cat $F/.next/BUILD_ID)
@@ -122,13 +126,14 @@ rollback() {
   rm -rf "$D/src"
   exit 2
 }
+API_RESTARTED=no
 [ $WEB = yes ] && sudo systemctl stop crm-frontend
 git -C $R merge -q --ff-only "$SHA" || rollback "git could not move the live checkout to ${SHA:0:7}"
 if [ $WEB = yes ]; then
   mv $F/.next $D/next.prev && mv $F/node_modules $D/node_modules.prev || rollback "could not move the old website build aside"
   mv src/frontend/.next $F/.next && mv src/frontend/node_modules $F/node_modules || rollback "could not move the new website build in"
 fi
-[ $API = yes ] && { sudo systemctl restart crm-backend || rollback "the backend did not restart"; }
+[ $API = yes ] && { API_RESTARTED=yes; sudo systemctl restart crm-backend || rollback "the backend did not restart"; }
 [ $WEB = yes ] && { sudo systemctl start crm-frontend || rollback "the website did not start"; }
 wait_for http://127.0.0.1:8000/health || rollback "the backend did not answer /health within 60 s"
 wait_for http://127.0.0.1:3000/login || rollback "the website did not answer within 60 s"
@@ -151,7 +156,7 @@ if [ $API = yes ]; then
     BOOTED=$(run_log crm-backend | grep -c 'Booting worker'); READY=$(run_log crm-backend | grep -c 'Application startup complete')
     [ "$BOOTED" -ge 1 ] && [ "$READY" = "$BOOTED" ] && break; sleep 1
   done
-  [ "$READY" = "$BOOTED" ] || rollback "only $READY of $BOOTED backend workers started"
+  [ "$BOOTED" -ge 1 ] && [ "$READY" = "$BOOTED" ] || rollback "only $READY of $BOOTED backend workers started"
 else
   [ "$(systemctl show crm-backend -p MainPID --value)" = "$BACKEND_PID" ] || rollback "the backend restarted although it should not have"
 fi
