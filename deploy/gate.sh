@@ -11,7 +11,8 @@ case "$MODE" in check|deploy) ;; *) echo "refused: expected 'check <commit>' or 
 git -C $REPO fetch -q origin main || { echo "git fetch failed"; exit 1; }
 git -C $REPO merge-base --is-ancestor "$SHA" origin/main || { echo "refused: $SHA is not on main"; exit 64; }
 RUN=/home/ubuntu/deploy/cd-$(date -u +%Y%m%dT%H%M%SZ)-$MODE
-mkdir -p $RUN && git -C $REPO show "$SHA:deploy/deploy.sh" > $RUN/deploy.sh || { echo "no deploy/deploy.sh in $SHA"; exit 1; }
+mkdir $RUN 2>/dev/null || { echo "refused: another run started this second"; exit 75; }
+git -C $REPO show "$SHA:deploy/deploy.sh" > $RUN/deploy.sh || { echo "no deploy/deploy.sh in $SHA"; exit 1; }
 bash -n $RUN/deploy.sh || { echo "refused: deploy/deploy.sh in $SHA does not parse"; exit 1; }
 : > $RUN/run.log
 setsid nohup flock -n -E 75 /home/ubuntu/deploy/.deploy.lock bash $RUN/deploy.sh "$MODE" "$SHA" "$RUN" >> $RUN/run.log 2>&1 < /dev/null &

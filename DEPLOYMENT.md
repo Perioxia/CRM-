@@ -21,6 +21,10 @@ Only what changed restarts:
 
 It never changes the database or installs Python packages. If an update needs either, the deploy stops before touching anything and says what is missing. Do that step by hand, then open the failed Deploy run and choose *Re-run jobs*.
 
+It also never edits `backend/.env`. If new code needs a new setting, add it on the server before approving the deploy.
+
+`deploy/deploy.sh` is taken from the commit being deployed, so review changes to `deploy/` as carefully as app code before approving.
+
 **Database migration.** Migrations must work with the old code still running (add columns or tables; drop or rename only in a later release). Make a Neon backup branch first, then on the server:
 
 ```bash
