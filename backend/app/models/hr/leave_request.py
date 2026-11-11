@@ -14,7 +14,7 @@ class LeaveRequest(Base):
     from_date = Column(DateTime(timezone=True), nullable=False)
     to_date = Column(DateTime(timezone=True), nullable=False)
     reason = Column(String(500), nullable=True)
-    status = Column(Enum(LeaveStatus, values_callable=lambda x: [e.value for e in x], native_enum=False), nullable=False, default=LeaveStatus.PENDING, index=True)  # Pending, Approved, Rejected
+    status = Column(Enum(LeaveStatus, values_callable=lambda x: [e.value for e in x], native_enum=False, length=20), nullable=False, default=LeaveStatus.PENDING, index=True)  # Pending, Approved, Rejected
     approved_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     approved_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
