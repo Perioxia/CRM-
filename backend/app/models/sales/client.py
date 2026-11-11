@@ -22,7 +22,7 @@ class Client(Base):
     
     # Converted from lead
     converted_from_lead_id = Column(Integer, ForeignKey("leads.id"), nullable=True)
-    account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True, index=True)
+    account_id = Column(Integer, ForeignKey("accounts.id", ondelete="SET NULL"), nullable=True, index=True)
     
     # Timestamps
     created_at = Column(DateTime, server_default=func.now())

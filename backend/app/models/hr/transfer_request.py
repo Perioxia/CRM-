@@ -14,7 +14,7 @@ class TeamTransferRequest(Base):
     current_team_id = Column(Integer, ForeignKey("teams.id"), nullable=True, index=True)
     target_team_id = Column(Integer, ForeignKey("teams.id"), nullable=False, index=True)
     reason = Column(String(500), nullable=True)
-    status = Column(Enum(TransferRequestStatus, values_callable=lambda x: [e.value for e in x], native_enum=False), nullable=False, default=TransferRequestStatus.PENDING, index=True)  # pending, approved, rejected
+    status = Column(Enum(TransferRequestStatus, values_callable=lambda x: [e.value for e in x], native_enum=False, length=20), nullable=False, default=TransferRequestStatus.PENDING, index=True)  # pending, approved, rejected
     admin_comment = Column(String(500), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
