@@ -15,7 +15,7 @@ class Lead(Base):
     phone = Column(String(50), nullable=True)
     company = Column(String(255), nullable=True)
     
-    status = Column(Enum(LeadStatus, values_callable=lambda x: [e.value for e in x], native_enum=False), default=LeadStatus.ACTIVE)
+    status = Column(Enum(LeadStatus, values_callable=lambda x: [e.value for e in x], native_enum=False, length=50), default=LeadStatus.ACTIVE)
     source = Column(String(100), nullable=True)  # Website, Referral, Cold Call, etc.
     service_type = Column(String(100), nullable=True)
     

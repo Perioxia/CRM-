@@ -8,7 +8,7 @@ from app.database import Base
 class AIConversation(Base):
     __tablename__ = "ai_conversations"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True)
     company_id = Column(Integer, ForeignKey("companies.id"), nullable=False, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     idempotency_key = Column(String(128), nullable=True)

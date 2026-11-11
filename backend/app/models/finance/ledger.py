@@ -13,10 +13,10 @@ class LedgerEntry(Base):
 
     data = Column(JSON, nullable=False)
 
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    created_at = Column(DateTime, server_default=func.now())
     created_by = Column(Integer, ForeignKey("users.id"))
     updated_at = Column(DateTime(timezone=True), nullable=True)
-    updated_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    updated_by = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 
     company = relationship("Company", backref="ledger_entries")
     creator = relationship("User", foreign_keys=[created_by])

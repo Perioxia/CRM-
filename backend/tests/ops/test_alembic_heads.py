@@ -14,7 +14,7 @@ def _scripts() -> ScriptDirectory:
 def test_alembic_has_exactly_one_head():
     heads = _scripts().get_heads()
     assert len(heads) == 1, heads
-    assert heads == ["044_invite_hashed_password"]
+    assert heads == ["045_schema_drift_cleanup"]
 
 
 def test_catchup_revision_follows_015():

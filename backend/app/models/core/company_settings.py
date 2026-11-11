@@ -50,7 +50,7 @@ class CompanySettings(Base):
 
     # Public meeting booking page (/book/{slug}); live only when both are set
     booking_slug = Column(String(64), nullable=True, index=True)
-    booking_host_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    booking_host_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 
     # Live GST e-invoice (NIC/IRP); live only when url + user + secrets set
     einvoice_base_url = Column(String(500), nullable=True)
@@ -64,7 +64,7 @@ class CompanySettings(Base):
 
     report_schedule_enabled = Column(Integer, default=0)
     report_schedule_frequency = Column(String(20), nullable=True)
-    report_schedule_saved_report_id = Column(Integer, ForeignKey("saved_reports.id"), nullable=True)
+    report_schedule_saved_report_id = Column(Integer, ForeignKey("saved_reports.id", ondelete="SET NULL"), nullable=True)
     report_schedule_last_sent_at = Column(DateTime, nullable=True)
 
     # Google Sheet lead pull. Share the sheet as anyone-with-the-link.

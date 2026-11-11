@@ -13,8 +13,8 @@ class Task(Base):
     title = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
     
-    status = Column(Enum(TaskStatus, values_callable=lambda x: [e.value for e in x], native_enum=False), default=TaskStatus.PENDING)
-    priority = Column(Enum(TaskPriority, values_callable=lambda x: [e.value for e in x], native_enum=False), default=TaskPriority.MEDIUM)
+    status = Column(Enum(TaskStatus, values_callable=lambda x: [e.value for e in x], native_enum=False, length=50), default=TaskStatus.PENDING)
+    priority = Column(Enum(TaskPriority, values_callable=lambda x: [e.value for e in x], native_enum=False, length=20), default=TaskPriority.MEDIUM)
     
     # Due date
     due_date = Column(DateTime, nullable=True)
@@ -23,7 +23,7 @@ class Task(Base):
     # Related entity (Lead or Client or Deal)
     lead_id = Column(Integer, ForeignKey("leads.id"), nullable=True)
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=True)
-    deal_id = Column(Integer, ForeignKey("deals.id"), nullable=True, index=True)
+    deal_id = Column(Integer, ForeignKey("deals.id", ondelete="SET NULL"), nullable=True, index=True)
     
     # Assignment
     assigned_to_id = Column(Integer, ForeignKey("users.id"), nullable=True)

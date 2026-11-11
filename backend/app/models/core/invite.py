@@ -24,7 +24,7 @@ class Invite(Base):
     team_id = Column(Integer, ForeignKey("teams.id"), nullable=True)
     manager_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     status = Column(String(20), default=InviteStatus.PENDING, index=True)
-    token = Column(String(255), unique=True, nullable=False)
+    token = Column(String(255), unique=True, nullable=False, index=True)
     hashed_password = Column(String(255), nullable=True)
     expires_at = Column(DateTime(timezone=True), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
