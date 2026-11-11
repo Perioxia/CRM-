@@ -28,6 +28,7 @@ source venv/bin/activate
 ```bash
 pip install -r requirements.txt
 ```
+`requirements.txt` pins every package, including the ones other packages pull in. To add or change a package, edit `requirements.in` and regenerate it with the command at the top of that file (needs `uv`: `pip install uv`).
 
 4. Configure environment:
 ```bash

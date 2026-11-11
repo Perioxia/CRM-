@@ -1,0 +1,30 @@
+# Direct dependencies. After editing, regenerate the full lock (requirements.txt):
+#   uv pip compile requirements.in --universal --python-version 3.14 -o requirements.txt
+fastapi==0.132.0
+uvicorn[standard]==0.27.0
+# Verified with uvicorn 0.27.0 (legacy websockets API); matches EC2.
+websockets==16.0
+gunicorn==25.1.0
+sqlalchemy==2.0.46
+alembic==1.13.1
+pydantic==2.12.5
+pydantic-settings==2.10.1
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+python-multipart==0.0.6
+python-dotenv==1.0.0
+psycopg[binary]==3.3.3
+email-validator==2.1.0
+cryptography==46.0.5
+bcrypt==5.0.0
+httpx==0.26.0
+starlette==0.52.1
+anyio==4.9.0
+sniffio==1.3.1
+h11==0.16.0
+click==8.2.1
+razorpay==2.0.1
+# 5.x is the line that supports Redis server 7.0 (EC2 apt: 7.0.15).
+redis==5.3.1
+# Testing (remove from server if you want a leaner image)
+pytest==7.4.3
