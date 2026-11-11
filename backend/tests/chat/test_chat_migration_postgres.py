@@ -147,7 +147,7 @@ def test_chat_migrations_create_schema_matching_the_models_with_policies(fresh, 
         assert model_indexes <= {i["name"] for i in insp.get_indexes(table)}
     assert _rls_state(engine, CHAT_TABLES) == {t: (True, True, True) for t in CHAT_TABLES}
     with engine.connect() as conn:
-        assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar() == "044_invite_hashed_password"
+        assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar() == "045_schema_drift_cleanup"
 
 
 def test_apply_schema_on_up_to_date_database_issues_no_ddl(fresh, monkeypatch):

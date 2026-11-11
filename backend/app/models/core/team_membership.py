@@ -13,7 +13,7 @@ class TeamMembership(Base):
 
     __tablename__ = "team_memberships"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True)
     company_id = Column(Integer, ForeignKey("companies.id"), nullable=False, index=True)
     team_id = Column(Integer, ForeignKey("teams.id"), nullable=False, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
