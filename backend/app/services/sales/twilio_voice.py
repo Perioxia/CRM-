@@ -166,14 +166,24 @@ def gateway_error_twiml(message: str = "We could not complete your call.") -> st
     return _say_twiml(message)
 
 
-def resolve_caller_id(row: CompanySettings, user: User) -> str:
-    personal = to_e164(user.twilio_phone_number)
+def resolve_caller_id(row: CompanySettings, user: Optional[User] = None) -> str:
+    """Outbound Dial callerId must be a number on the Twilio account.
+
+    User.twilio_phone_number is an optional personal Twilio DID for inbound routing,
+    not a personal mobile. Prefer the company Twilio number for Dial so a mistaken
+    mobile override does not trigger Client error 31005.
+    """
+    company = to_e164(row.twilio_phone_number)
+    personal = to_e164(user.twilio_phone_number) if user is not None else None
+    # Allow a personal DID only when it is the same as the company number, or when
+    # no company number exists. Never dial out presenting an arbitrary mobile.
+    if company and personal and personal != company:
+        return company
     if personal:
         return personal
-    company = to_e164(row.twilio_phone_number)
-    if not company:
-        raise RuntimeError("Twilio phone number is not configured")
-    return company
+    if company:
+        return company
+    raise RuntimeError("Twilio phone number is not configured")
 
 
 def ring_mobile_for(user: User, row: CompanySettings) -> bool:
