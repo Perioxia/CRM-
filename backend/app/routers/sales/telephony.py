@@ -120,12 +120,16 @@ def _signature_urls(request: Request) -> list[str]:
     return out
 
 
-def _voice_sig_ok(row, request: Request, params: dict) -> bool:
-    signature = request.headers.get("X-Twilio-Signature")
-    urls = _signature_urls(request)
+def _voice_sig_ok(row, *, signature: Optional[str], urls: list[str], params: dict) -> bool:
+    if not urls:
+        return False
     return twilio_voice.validate_request_signature(
         row, url=urls[0], params=params, signature=signature, extra_urls=urls[1:],
     )
+
+
+async def _db(fn, *args, **kwargs):
+    return await run_in_threadpool(fn, *args, **kwargs)
 
 
 @router.get("/connection")
@@ -427,22 +431,18 @@ def _company_settings_for_account(db: Session, account_sid: Optional[str]) -> Op
     )
 
 
-@router.post("/twilio/voice")
-async def twilio_voice_webhook(request: Request, db: Session = Depends(get_db)):
-    form = await request.form()
-    params = _form_dict(form)
+def _twilio_voice_db(db: Session, params: dict, *, signature: Optional[str], urls: list[str]) -> Response:
     account_sid = params.get("AccountSid")
     row = _company_settings_for_account(db, account_sid)
     if row is None or not twilio_voice.twilio_configured(row):
         # Always return TwiML — JSON/403 makes Twilio Client fail with 31005.
         return Response(content=twilio_voice.no_agent_twiml(), media_type="application/xml", status_code=200)
 
-    if not _voice_sig_ok(row, request, params):
+    if not _voice_sig_ok(row, signature=signature, urls=urls, params=params):
         import logging
         logging.getLogger("app").warning(
-            "twilio voice signature mismatch public_url=%s path=%s",
+            "twilio voice signature mismatch public_url=%s",
             twilio_voice.webhook_base(),
-            request.url.path,
         )
         return Response(
             content=twilio_voice.gateway_error_twiml(
@@ -489,10 +489,7 @@ async def twilio_voice_webhook(request: Request, db: Session = Depends(get_db)):
     return Response(content=xml, media_type="application/xml")
 
 
-@router.post("/twilio/inbound")
-async def twilio_inbound_webhook(request: Request, db: Session = Depends(get_db)):
-    form = await request.form()
-    params = _form_dict(form)
+def _twilio_inbound_db(db: Session, params: dict, *, signature: Optional[str], urls: list[str]) -> Response:
     to_phone = params.get("To") or params.get("Called")
     from_phone = params.get("From") or params.get("Caller")
     account_sid = params.get("AccountSid")
@@ -503,7 +500,7 @@ async def twilio_inbound_webhook(request: Request, db: Session = Depends(get_db)
     if row is None or not twilio_voice.twilio_configured(row):
         return Response(content=twilio_voice.no_agent_twiml(), media_type="application/xml")
 
-    if not _voice_sig_ok(row, request, params):
+    if not _voice_sig_ok(row, signature=signature, urls=urls, params=params):
         import logging
         logging.getLogger("app").warning("twilio inbound signature mismatch")
         return Response(
@@ -549,12 +546,15 @@ async def twilio_inbound_webhook(request: Request, db: Session = Depends(get_db)
     return Response(content=xml, media_type="application/xml")
 
 
-@router.post("/twilio/status", status_code=204)
-async def twilio_status_webhook(request: Request, db: Session = Depends(get_db)):
-    form = await request.form()
-    params = _form_dict(form)
+def _twilio_status_db(
+    db: Session,
+    params: dict,
+    *,
+    signature: Optional[str],
+    urls: list[str],
+    call_log_id: Optional[str],
+) -> None:
     account_sid = params.get("AccountSid")
-    call_log_id = request.query_params.get("call_log_id") or params.get("call_log_id")
     row = _company_settings_for_account(db, account_sid)
     if row is None and call_log_id:
         call = db.query(CallLog).filter(CallLog.id == int(call_log_id)).first()
@@ -563,19 +563,60 @@ async def twilio_status_webhook(request: Request, db: Session = Depends(get_db))
     if row is None or not twilio_voice.twilio_configured(row):
         return None
 
-    if not _voice_sig_ok(row, request, params):
+    if not _voice_sig_ok(row, signature=signature, urls=urls, params=params):
         # Status callbacks should not 403 — Twilio retries and Client surfaces 31005.
         import logging
         logging.getLogger("app").warning("twilio status signature mismatch")
         return None
 
-    await run_in_threadpool(
-        twilio_voice.apply_twilio_status,
+    twilio_voice.apply_twilio_status(
         db,
         call_sid=params.get("CallSid"),
         parent_call_sid=params.get("ParentCallSid"),
         call_status=params.get("CallStatus") or params.get("DialCallStatus"),
         call_duration=params.get("CallDuration") or params.get("DialCallDuration"),
         call_log_id=int(call_log_id) if call_log_id else None,
+    )
+    return None
+
+
+@router.post("/twilio/voice")
+async def twilio_voice_webhook(request: Request, db: Session = Depends(get_db)):
+    form = await request.form()
+    params = _form_dict(form)
+    return await _db(
+        _twilio_voice_db,
+        db,
+        params,
+        signature=request.headers.get("X-Twilio-Signature"),
+        urls=_signature_urls(request),
+    )
+
+
+@router.post("/twilio/inbound")
+async def twilio_inbound_webhook(request: Request, db: Session = Depends(get_db)):
+    form = await request.form()
+    params = _form_dict(form)
+    return await _db(
+        _twilio_inbound_db,
+        db,
+        params,
+        signature=request.headers.get("X-Twilio-Signature"),
+        urls=_signature_urls(request),
+    )
+
+
+@router.post("/twilio/status", status_code=204)
+async def twilio_status_webhook(request: Request, db: Session = Depends(get_db)):
+    form = await request.form()
+    params = _form_dict(form)
+    call_log_id = request.query_params.get("call_log_id") or params.get("call_log_id")
+    await _db(
+        _twilio_status_db,
+        db,
+        params,
+        signature=request.headers.get("X-Twilio-Signature"),
+        urls=_signature_urls(request),
+        call_log_id=call_log_id,
     )
     return None

@@ -26,6 +26,9 @@ REVIEWED = {
     "app.routers.chat.rest.chat_sync",
     "app.routers.chat.rest.chat_unread",
     "app.routers.sales.telephony.exotel_webhook",
+    "app.routers.sales.telephony.twilio_inbound_webhook",
+    "app.routers.sales.telephony.twilio_status_webhook",
+    "app.routers.sales.telephony.twilio_voice_webhook",
     "app.routers.sales.whatsapp.gupshup_webhook",
 }
 
