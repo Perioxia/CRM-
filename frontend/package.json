@@ -19,7 +19,7 @@
     "test:e2e:local": "PW_USE_EXTERNAL=1 playwright test --project=local-chromium"
   },
   "dependencies": {
-    "@twilio/voice-sdk": "^2.12.3",
+    "@twilio/voice-sdk": "^2.18.5",
     "axios": "1.13.6",
     "date-fns": "2.30.0",
     "framer-motion": "12.23.26",
