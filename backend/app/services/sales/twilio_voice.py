@@ -51,14 +51,21 @@ def to_e164(phone: Optional[str]) -> Optional[str]:
 def twilio_configured(row: Optional[CompanySettings]) -> bool:
     if row is None:
         return False
-    return bool(
+    if not (
         (row.twilio_account_sid or "").strip()
         and (row.twilio_auth_token_encrypted or "").strip()
         and (row.twilio_api_key_sid or "").strip()
         and (row.twilio_api_key_secret_encrypted or "").strip()
         and (row.twilio_twiml_app_sid or "").strip()
         and (row.twilio_phone_number or "").strip()
-    )
+    ):
+        return False
+    # Secrets are Fernet-encrypted with SECRET_KEY. Non-empty blobs from another
+    # environment (e.g. local CRM writing to shared Neon) must not count as configured.
+    try:
+        return bool(auth_token(row).strip() and api_key_secret(row).strip())
+    except Exception:
+        return False
 
 
 def save_auth_token(row: CompanySettings, token: str) -> None:
