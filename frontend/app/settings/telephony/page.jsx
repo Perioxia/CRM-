@@ -186,9 +186,12 @@ export default function TelephonySettingsPage() {
                 Personal phone on file: {mePhone || 'not set'}. When ring-mobile is on, inbound calls also ring that number.
               </p>
               <label className="block text-xs">
-                My Twilio number (optional override)
-                <input value={meTwilioPhone} onChange={(e) => setMeTwilioPhone(e.target.value)} placeholder="company number used if empty" className="mt-1 w-full px-2 py-1.5 border rounded text-sm bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-600" />
+                My Twilio DID (optional — only if this account assigned you a Twilio number)
+                <input value={meTwilioPhone} onChange={(e) => setMeTwilioPhone(e.target.value)} placeholder="leave blank to use company Twilio number" className="mt-1 w-full px-2 py-1.5 border rounded text-sm bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-600" />
               </label>
+              <p className="text-[11px] text-slate-500">
+                Do not put your personal mobile here. Outbound calls always show the company Twilio number as caller ID; this field is for inbound DID routing only.
+              </p>
               <label className="flex items-center gap-2 text-xs">
                 <input type="checkbox" checked={meRingMobile} onChange={(e) => setMeRingMobile(e.target.checked)} />
                 Also ring my mobile for inbound calls
