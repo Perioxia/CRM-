@@ -106,6 +106,18 @@ const ROLE_NAVIGATION = {
         { category: 'Insights' },
         { name: 'Performance', href: '/sales/performance', icon: 'BarChart' },
         { name: 'Forecast', href: '/reports/forecast', icon: 'TrendingUp' },
+        { category: 'SETTINGS' },
+        {
+            name: 'Settings',
+            href: '/sales/settings',
+            icon: 'Settings',
+            children: [
+                { name: 'My settings', href: '/sales/settings' },
+                { name: 'Telephony', href: '/settings/telephony' },
+                { name: 'Email', href: '/settings/email' },
+                { name: 'Calendar', href: '/settings/calendar' },
+            ],
+        },
     ],
     manager: [
         { category: 'Workspace' },
@@ -128,6 +140,18 @@ const ROLE_NAVIGATION = {
         { name: 'Reports', href: '/manager/reports', icon: 'PieChart' },
         { name: 'Saved reports', href: '/reports', icon: 'BarChart3' },
         { name: 'Forecast', href: '/reports/forecast', icon: 'TrendingUp' },
+        { category: 'SETTINGS' },
+        {
+            name: 'Settings',
+            href: '/manager/settings',
+            icon: 'Settings',
+            children: [
+                { name: 'My settings', href: '/manager/settings' },
+                { name: 'Telephony', href: '/settings/telephony' },
+                { name: 'Email', href: '/settings/email' },
+                { name: 'Calendar', href: '/settings/calendar' },
+            ],
+        },
     ],
     admin: [
         { name: 'Dashboard', href: '/admin/dashboard', icon: 'LayoutDashboard' },
@@ -146,6 +170,7 @@ const ROLE_NAVIGATION = {
             icon: 'Settings',
             children: [
                 { name: 'Email', href: '/settings/email' },
+                { name: 'Telephony', href: '/settings/telephony' },
                 { name: 'Lead sheet', href: '/settings/lead-sheet' },
                 { name: 'Calendar', href: '/settings/calendar' },
                 { name: 'Webhooks', href: '/settings/webhooks' },
@@ -185,6 +210,7 @@ const ROLE_NAVIGATION = {
             icon: 'Settings',
             children: [
                 { name: 'Email', href: '/settings/email' },
+                { name: 'Telephony', href: '/settings/telephony' },
                 { name: 'Lead sheet', href: '/settings/lead-sheet' },
                 { name: 'Calendar', href: '/settings/calendar' },
                 { name: 'Webhooks', href: '/settings/webhooks' },

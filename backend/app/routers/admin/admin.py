@@ -214,6 +214,8 @@ def get_user(
         "name": user.full_name,
         "email": user.email,
         "phone": user.phone,
+        "twilio_phone_number": user.twilio_phone_number,
+        "twilio_ring_mobile": None if user.twilio_ring_mobile is None else bool(user.twilio_ring_mobile),
         "role": user.role,
         "team": team.name if team else None,
         "team_id": user.team_id,
@@ -249,6 +251,11 @@ def update_user(
         user.team_id = body.team_id if body.team_id > 0 else None
     if body.status is not None:
         user.status = body.status
+    if body.twilio_phone_number is not None:
+        from app.utils.helpers import normalize_phone
+        user.twilio_phone_number = normalize_phone(body.twilio_phone_number)
+    if body.twilio_ring_mobile is not None:
+        user.twilio_ring_mobile = 1 if body.twilio_ring_mobile else 0
     if body.manager_id is not None:
         if body.manager_id > 0:
             manager = apply_company_scope(db.query(User), User, current_user).filter(User.id == body.manager_id).first()

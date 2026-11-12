@@ -32,6 +32,9 @@ export default function UserDetailPage() {
 
     // Form state
     const [selectedRole, setSelectedRole] = useState('');
+    const [twilioPhone, setTwilioPhone] = useState('');
+    const [twilioRingMobile, setTwilioRingMobile] = useState(true);
+    const [savingTwilio, setSavingTwilio] = useState(false);
 
     const fetchUser = async () => {
         setLoading(true);
@@ -41,6 +44,8 @@ export default function UserDetailPage() {
             const userData = res.data;
             setUser(userData);
             setSelectedRole(userData.role || '');
+            setTwilioPhone(userData.twilio_phone_number || '');
+            setTwilioRingMobile(userData.twilio_ring_mobile !== false && userData.twilio_ring_mobile !== 0);
         } catch (err) {
             console.error('Failed to fetch user detail', err);
             setError(err?.response?.data?.detail || err?.message || 'Failed to load user details.');
@@ -189,6 +194,54 @@ export default function UserDetailPage() {
                                     </div>
                                 </div>
                             )}
+                        </div>
+                    </div>
+
+                    <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-5">
+                        <h3 className="text-[16px] font-semibold text-slate-900 dark:text-white mb-4">Twilio softphone</h3>
+                        <div className="space-y-3">
+                            <label className="block text-[12px] font-medium text-slate-500">
+                                Personal Twilio number
+                                <input
+                                    value={twilioPhone}
+                                    onChange={(e) => setTwilioPhone(e.target.value)}
+                                    placeholder="optional"
+                                    className="mt-1 w-full px-2 py-1.5 border rounded text-sm bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-600"
+                                />
+                            </label>
+                            <label className="flex items-center gap-2 text-[12px] text-slate-600 dark:text-slate-300">
+                                <input
+                                    type="checkbox"
+                                    checked={twilioRingMobile}
+                                    onChange={(e) => setTwilioRingMobile(e.target.checked)}
+                                />
+                                Also ring mobile for inbound
+                            </label>
+                            <button
+                                type="button"
+                                disabled={savingTwilio}
+                                onClick={async () => {
+                                    setSavingTwilio(true);
+                                    try {
+                                        await api.put(`/admin/users/${params.userId}`, {
+                                            twilio_phone_number: twilioPhone,
+                                            twilio_ring_mobile: twilioRingMobile,
+                                        });
+                                        setUser({
+                                            ...user,
+                                            twilio_phone_number: twilioPhone || null,
+                                            twilio_ring_mobile: twilioRingMobile,
+                                        });
+                                    } catch (err) {
+                                        alert(err?.response?.data?.detail || 'Failed to save Twilio settings.');
+                                    } finally {
+                                        setSavingTwilio(false);
+                                    }
+                                }}
+                                className="w-full px-3 py-2 text-sm font-medium rounded-lg bg-slate-900 text-white disabled:opacity-50"
+                            >
+                                {savingTwilio ? 'Saving…' : 'Save softphone'}
+                            </button>
                         </div>
                     </div>
 

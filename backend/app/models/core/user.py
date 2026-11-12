@@ -18,6 +18,8 @@ class User(Base):
     team_id = Column(Integer, ForeignKey("teams.id"), nullable=True)
     manager_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     phone = Column(String(50), nullable=True)
+    twilio_phone_number = Column(String(20), nullable=True)
+    twilio_ring_mobile = Column(Integer, nullable=True)  # None=company default, 1=yes, 0=no
     notification_prefs_json = Column(Text, nullable=True)
     employee_num = Column(Integer, nullable=True)  # Sequential number within company, assigned at creation
     is_active = Column(Boolean, default=True)

@@ -163,6 +163,27 @@ export default function SettingsPage() {
 
           <div className="p-6">
             <Link
+              href="/settings/telephony"
+              className="flex items-center justify-between p-4 rounded-lg border border-slate-100 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-all group mb-3"
+            >
+              <div className="flex items-center gap-4">
+                <div className="w-10 h-10 rounded-full bg-emerald-50 dark:bg-emerald-900/20 flex items-center justify-center text-emerald-600 dark:text-emerald-400">
+                  <Phone size={20} />
+                </div>
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-900 dark:text-white group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors">
+                    Softphone / Telephony
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Browser calling prefs — ring mobile, personal Twilio number
+                  </p>
+                </div>
+              </div>
+              <div className="text-slate-400 group-hover:translate-x-1 transition-transform">
+                →
+              </div>
+            </Link>
+            <Link
               href="/settings/email"
               className="flex items-center justify-between p-4 rounded-lg border border-slate-100 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-all group mb-3"
             >

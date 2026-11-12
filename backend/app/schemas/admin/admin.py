@@ -67,6 +67,8 @@ class UserUpdateRequest(BaseModel):
     team_id: Optional[int] = None
     manager_id: Optional[int] = None
     status: Optional[str] = None
+    twilio_phone_number: Optional[str] = None
+    twilio_ring_mobile: Optional[bool] = None
 
 
 class InviteRequest(BaseModel):
