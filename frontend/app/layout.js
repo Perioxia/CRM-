@@ -5,7 +5,9 @@ import { LocaleProvider } from '../contexts/LocaleContext';
 import { NotificationProvider } from '../contexts/NotificationContext';
 import { ChatProvider } from '../contexts/ChatContext';
 import { CallProvider } from '../contexts/CallContext';
+import { SoftphoneProvider } from '../contexts/SoftphoneContext';
 import CallOverlay from '../components/chat/CallOverlay';
+import SoftphoneBar from '../components/telephony/SoftphoneBar';
 import Layout from '../components/Layout';
 import RouteGuard from '../components/RouteGuard';
 import ErrorBoundary from '../components/ErrorBoundary';
@@ -29,14 +31,17 @@ export default function RootLayout({ children }) {
                             <NotificationProvider>
                                 <ChatProvider>
                                     <CallProvider>
-                                        <ErrorBoundary>
-                                            <RouteGuard>
-                                                <Layout>
-                                                    {children}
-                                                </Layout>
-                                            </RouteGuard>
-                                        </ErrorBoundary>
-                                        <CallOverlay />
+                                        <SoftphoneProvider>
+                                            <ErrorBoundary>
+                                                <RouteGuard>
+                                                    <Layout>
+                                                        {children}
+                                                    </Layout>
+                                                </RouteGuard>
+                                            </ErrorBoundary>
+                                            <CallOverlay />
+                                            <SoftphoneBar />
+                                        </SoftphoneProvider>
                                     </CallProvider>
                                 </ChatProvider>
                             </NotificationProvider>

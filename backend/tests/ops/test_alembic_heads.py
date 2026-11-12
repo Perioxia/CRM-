@@ -14,7 +14,7 @@ def _scripts() -> ScriptDirectory:
 def test_alembic_has_exactly_one_head():
     heads = _scripts().get_heads()
     assert len(heads) == 1, heads
-    assert heads == ["044_invite_hashed_password"]
+    assert heads == ["045_twilio_voice"]
 
 
 def test_catchup_revision_follows_015():
@@ -171,3 +171,9 @@ def test_company_id_sequence_revision_follows_042():
     rev = _scripts().get_revision("043_company_id_sequence")
     assert rev is not None
     assert rev.down_revision == "042_chat_calls"
+
+
+def test_twilio_voice_revision_follows_044():
+    rev = _scripts().get_revision("045_twilio_voice")
+    assert rev is not None
+    assert rev.down_revision == "044_invite_hashed_password"

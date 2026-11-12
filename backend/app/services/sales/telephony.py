@@ -27,13 +27,26 @@ def telephony_configured(row: Optional[CompanySettings]) -> bool:
 
 
 def serialize_connection(row: Optional[CompanySettings], *, has_agent_phone: bool) -> dict:
+    from app.services.sales.twilio_voice import serialize_twilio, twilio_configured
+
+    exotel_ok = telephony_configured(row)
+    twilio_ok = twilio_configured(row)
+    if exotel_ok and twilio_ok:
+        provider = "both"
+    elif twilio_ok:
+        provider = "twilio"
+    elif exotel_ok:
+        provider = "exotel"
+    else:
+        provider = None
     return {
-        "configured": telephony_configured(row),
+        "configured": exotel_ok,
         "caller_id": (row.exotel_caller_id if row else None) or None,
-        "sid": (row.exotel_sid if row and telephony_configured(row) else None),
+        "sid": (row.exotel_sid if row and exotel_ok else None),
         "subdomain": (row.exotel_subdomain if row else None) or "api.exotel.com",
         "has_agent_phone": has_agent_phone,
-        "provider": "exotel",
+        "provider": provider,
+        "twilio": serialize_twilio(row),
     }
 
 

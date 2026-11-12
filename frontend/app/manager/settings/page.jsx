@@ -3,13 +3,15 @@
 import { useState, useEffect } from 'react';
 import api from '../../../services/api';
 import NotificationPreferencesPanel from '../../../components/shared/NotificationPreferencesPanel';
+import Link from 'next/link';
 import {
     Users,
     Shield,
     FileText,
     Building2,
     ArrowUpRight,
-    Bell
+    Bell,
+    Phone
 } from 'lucide-react';
 
 export default function ManagerSettingsPage() {
@@ -80,6 +82,22 @@ export default function ManagerSettingsPage() {
             </div>
 
             <div className="max-w-5xl mx-auto px-6 py-8 space-y-8">
+
+                <Link
+                    href="/settings/telephony"
+                    className="flex items-center justify-between p-4 rounded-xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50/50 dark:bg-emerald-950/20 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 transition-colors"
+                >
+                    <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-full bg-emerald-100 dark:bg-emerald-900/40 flex items-center justify-center text-emerald-700 dark:text-emerald-300">
+                            <Phone size={18} />
+                        </div>
+                        <div>
+                            <h3 className="text-sm font-semibold text-slate-900 dark:text-white">Softphone / Telephony</h3>
+                            <p className="text-xs text-slate-500">Browser calling prefs and ring-mobile settings</p>
+                        </div>
+                    </div>
+                    <span className="text-slate-400">→</span>
+                </Link>
 
                 {/* TOP CARDS: INFO & STATUS */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6">

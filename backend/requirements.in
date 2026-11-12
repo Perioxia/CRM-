@@ -28,3 +28,5 @@ razorpay==2.0.1
 redis==5.3.1
 # Testing (remove from server if you want a leaner image)
 pytest==7.4.3
+# Twilio Voice softphone
+twilio==9.6.0

@@ -31,6 +31,11 @@ export default function TopBar() {
         router.push('/login');
     };
 
+    const settingsHref =
+        roleKey === 'sales' ? '/sales/settings'
+            : roleKey === 'manager' ? '/manager/settings'
+                : '/settings';
+
     return (
         <header className="relative z-40 bg-surface border-b border-border h-14 flex items-center justify-between gap-4 px-4 sm:px-5">
             <div className="flex items-center gap-3 min-w-0 flex-1">
@@ -42,7 +47,7 @@ export default function TopBar() {
                 <ThemeToggle className="!border-none !bg-transparent hover:!bg-surface-elevated h-8 w-8" />
                 <NotificationDropdown />
                 <button
-                    onClick={() => router.push('/settings')}
+                    onClick={() => router.push(settingsHref)}
                     className="p-2 text-secondary hover:text-primary hover:bg-surface-elevated rounded-md transition-colors"
                     aria-label="Settings"
                 >
@@ -99,13 +104,22 @@ export default function TopBar() {
                                     </button>
                                     <button
                                         onClick={() => {
-                                            router.push('/settings/leave');
+                                            router.push(settingsHref);
                                             setDropdownOpen(false);
                                         }}
                                         className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] text-secondary hover:bg-surface-elevated"
                                     >
                                         <Settings size={15} className="text-muted" />
                                         Settings
+                                    </button>
+                                    <button
+                                        onClick={() => {
+                                            router.push('/settings/telephony');
+                                            setDropdownOpen(false);
+                                        }}
+                                        className="w-full flex items-center gap-2.5 px-3 py-2 text-[13px] text-secondary hover:bg-surface-elevated"
+                                    >
+                                        Softphone
                                     </button>
                                     <button
                                         onClick={handleLogout}

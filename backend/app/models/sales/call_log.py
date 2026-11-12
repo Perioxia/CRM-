@@ -27,6 +27,8 @@ class CallLog(Base):
     provider_call_id = Column(String(64), nullable=True, index=True)
     from_phone = Column(String(20), nullable=True)
     to_phone = Column(String(20), nullable=True)
+    started_at = Column(DateTime, nullable=True)
+    ended_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, server_default=func.now())
 
     company = relationship("Company")

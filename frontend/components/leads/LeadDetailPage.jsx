@@ -34,6 +34,7 @@ import LeadWhatsAppPanel from './LeadWhatsAppPanel';
 import LeadTagsPanel from './LeadTagsPanel';
 import LeadDuplicatesPanel from './LeadDuplicatesPanel';
 import MeetingCallPanel from '../activity/MeetingCallPanel';
+import SoftphoneCallButton from '../telephony/SoftphoneCallButton';
 import ActivityFeed from '../activity/ActivityFeed';
 import ScoreBadge from '../ScoreBadge';
 
@@ -563,6 +564,12 @@ export default function LeadDetailPage() {
           {canWork && (
             <>
               <LeadDuplicatesPanel leadId={id} onMerged={fetchLeadData} />
+              <SoftphoneCallButton
+                leadId={Number(id)}
+                toPhone={lead.phone}
+                label={lead.name || lead.phone}
+                onPlaced={fetchLeadData}
+              />
               <MeetingCallPanel parentType="lead" parentId={id} onChanged={fetchLeadData} hideHistory />
               <LeadTagsPanel leadId={id} tags={lead.tags} onChanged={fetchLeadData} />
               <LeadEmailPanel leadId={id} leadEmail={lead.email} hideHistory onChanged={fetchLeadData} />
