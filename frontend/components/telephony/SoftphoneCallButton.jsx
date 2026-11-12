@@ -6,7 +6,7 @@ import { Phone } from 'lucide-react';
 import { useSoftphone } from '../../contexts/SoftphoneContext';
 
 export default function SoftphoneCallButton({ leadId, clientId, dealId, toPhone, label, onPlaced }) {
-  const { enabled, ready, status, placeCall } = useSoftphone();
+  const { enabled, ready, status, placeCall, error: softphoneError } = useSoftphone();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
@@ -15,7 +15,7 @@ export default function SoftphoneCallButton({ leadId, clientId, dealId, toPhone,
       <div className="rounded-lg border border-dashed border-slate-200 dark:border-slate-600 p-3 space-y-1">
         <p className="text-xs font-medium text-slate-700 dark:text-slate-200">Browser calling</p>
         <p className="text-xs text-slate-500">
-          Twilio is not configured yet.{' '}
+          {softphoneError || 'Twilio is not configured yet.'}{' '}
           <Link href="/settings/telephony" className="text-emerald-700 dark:text-emerald-400 underline">
             Open Telephony settings
           </Link>

@@ -132,14 +132,20 @@ export function SoftphoneProvider({ children }) {
       await device.register();
     } catch (err) {
       const detail = err?.response?.data?.detail;
-      if (err?.response?.status === 400) {
-        setEnabled(false);
-        setReady(false);
+      const statusCode = err?.response?.status;
+      setEnabled(false);
+      setReady(false);
+      if (statusCode === 400) {
+        setError('');
+        return;
+      }
+      if (statusCode === 502) {
+        setError(
+          'Twilio secrets cannot be read on this server. An admin must re-save the Auth Token and API Key Secret under Settings → Telephony (on crm.perioxia.com, not local).',
+        );
         return;
       }
       setError(typeof detail === 'string' ? detail : 'Could not start softphone');
-      setEnabled(false);
-      setReady(false);
     }
   }, [user?.id, bindCallEvents, destroyDevice]);
 
