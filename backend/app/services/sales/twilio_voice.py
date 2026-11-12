@@ -51,14 +51,21 @@ def to_e164(phone: Optional[str]) -> Optional[str]:
 def twilio_configured(row: Optional[CompanySettings]) -> bool:
     if row is None:
         return False
-    return bool(
+    if not (
         (row.twilio_account_sid or "").strip()
         and (row.twilio_auth_token_encrypted or "").strip()
         and (row.twilio_api_key_sid or "").strip()
         and (row.twilio_api_key_secret_encrypted or "").strip()
         and (row.twilio_twiml_app_sid or "").strip()
         and (row.twilio_phone_number or "").strip()
-    )
+    ):
+        return False
+    # Secrets are Fernet-encrypted with SECRET_KEY. Non-empty blobs from another
+    # environment (e.g. local CRM writing to shared Neon) must not count as configured.
+    try:
+        return bool(auth_token(row).strip() and api_key_secret(row).strip())
+    except Exception:
+        return False
 
 
 def save_auth_token(row: CompanySettings, token: str) -> None:
@@ -159,14 +166,24 @@ def gateway_error_twiml(message: str = "We could not complete your call.") -> st
     return _say_twiml(message)
 
 
-def resolve_caller_id(row: CompanySettings, user: User) -> str:
-    personal = to_e164(user.twilio_phone_number)
+def resolve_caller_id(row: CompanySettings, user: Optional[User] = None) -> str:
+    """Outbound Dial callerId must be a number on the Twilio account.
+
+    User.twilio_phone_number is an optional personal Twilio DID for inbound routing,
+    not a personal mobile. Prefer the company Twilio number for Dial so a mistaken
+    mobile override does not trigger Client error 31005.
+    """
+    company = to_e164(row.twilio_phone_number)
+    personal = to_e164(user.twilio_phone_number) if user is not None else None
+    # Allow a personal DID only when it is the same as the company number, or when
+    # no company number exists. Never dial out presenting an arbitrary mobile.
+    if company and personal and personal != company:
+        return company
     if personal:
         return personal
-    company = to_e164(row.twilio_phone_number)
-    if not company:
-        raise RuntimeError("Twilio phone number is not configured")
-    return company
+    if company:
+        return company
+    raise RuntimeError("Twilio phone number is not configured")
 
 
 def ring_mobile_for(user: User, row: CompanySettings) -> bool:

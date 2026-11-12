@@ -85,7 +85,7 @@ export function SoftphoneProvider({ children }) {
       const code = err?.code || err?.twilioError?.code;
       const raw = err?.message || 'Call error';
       const msg = code === 31005
-        ? 'Call failed (31005): Twilio could not reach your Voice webhook. Confirm ngrok is running, PUBLIC_API_URL matches it, and the TwiML App Voice URL is PUBLIC_API_URL/api/telephony/twilio/voice. Trial accounts can only dial verified numbers.'
+        ? 'Call failed (31005): Twilio rejected the call. Confirm TwiML App Voice URL is https://crm.perioxia.com/api/telephony/twilio/voice, Dial caller ID is your Twilio number (not a personal mobile), and on trial accounts the destination number is verified in Twilio.'
         : raw;
       setError(msg);
       resetCallUi();
@@ -117,7 +117,7 @@ export function SoftphoneProvider({ children }) {
       device.on('error', (err) => {
         const code = err?.code || err?.twilioError?.code;
         if (code === 31005) {
-          setError('Softphone gateway error (31005). Check ngrok + PUBLIC_API_URL + TwiML App Voice URL.');
+          setError('Softphone gateway error (31005). Check TwiML Voice URL, Twilio caller ID, and trial verified numbers.');
         } else {
           setError(err?.message || 'Softphone error');
         }
@@ -132,14 +132,20 @@ export function SoftphoneProvider({ children }) {
       await device.register();
     } catch (err) {
       const detail = err?.response?.data?.detail;
-      if (err?.response?.status === 400) {
-        setEnabled(false);
-        setReady(false);
+      const statusCode = err?.response?.status;
+      setEnabled(false);
+      setReady(false);
+      if (statusCode === 400) {
+        setError('');
+        return;
+      }
+      if (statusCode === 502) {
+        setError(
+          'Twilio secrets cannot be read on this server. An admin must re-save the Auth Token and API Key Secret under Settings → Telephony (on crm.perioxia.com, not local).',
+        );
         return;
       }
       setError(typeof detail === 'string' ? detail : 'Could not start softphone');
-      setEnabled(false);
-      setReady(false);
     }
   }, [user?.id, bindCallEvents, destroyDevice]);
 
