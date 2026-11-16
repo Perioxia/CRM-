@@ -37,6 +37,8 @@ export default function SalesReviewDetailPage() {
                 const total = d.deal?.amount || 0;
                 const subtotal = d.deal?.subtotal || total;
                 const tax = d.deal?.tax || 0;
+                const discount = Number(d.deal?.discount || 0);
+                const money = (value) => `₹${Number(value).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`;
                 let uiStatus = 'Pending Review';
                 const rawStatus = (d.status || '').toLowerCase();
                 if (['pending', 'paid', 'sent', 'overdue'].includes(rawStatus)) {
@@ -61,10 +63,11 @@ export default function SalesReviewDetailPage() {
                         type: 'Client'
                     },
                     pricing: {
-                        subtotal: `₹${Number(subtotal).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`,
-                        discount: '0%',
-                        discountAmount: '₹0.00',
-                        total: `₹${Number(total).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`
+                        subtotal: money(subtotal),
+                        discount: `${Number(subtotal) > 0 ? ((discount / Number(subtotal)) * 100).toFixed(1).replace(/\.0$/, '') : 0}%`,
+                        discountAmount: money(discount),
+                        tax: money(tax),
+                        total: money(total)
                     },
                     invoiceLinkage: { hasInvoice: true, invoiceId: d.number, invoiceStatus: d.status },
                     rep: d.salesperson?.name || 'Unknown',
@@ -197,6 +200,10 @@ export default function SalesReviewDetailPage() {
                                     Discount ({sale.pricing.discount})
                                 </span>
                                 <span className="text-red-600 dark:text-red-400">-{sale.pricing.discountAmount}</span>
+                            </div>
+                            <div className="flex justify-between text-[14px]">
+                                <span className="text-slate-600 dark:text-slate-400">GST</span>
+                                <span className="text-slate-800 dark:text-slate-200">{sale.pricing.tax}</span>
                             </div>
                             <div className="border-t border-slate-100 dark:border-slate-700/50 pt-3 flex justify-between text-[16px] font-semibold">
                                 <span className="text-slate-900 dark:text-white">Total</span>
