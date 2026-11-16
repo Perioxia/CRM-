@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from app.models.core.team import Team
 from app.models.core.team_membership import TeamMembership
 from app.models.core.user import User
+from app.services.sales.lead_access import user_role
 from app.utils.dependencies import apply_company_scope
 
 
@@ -19,10 +20,20 @@ def _membership_teams(db: Session, user: User) -> list[Team]:
 
 def ensure_user_teams(db: Session, user: User) -> list[Team]:
     """
-    Return teams the user may act as. Creates or joins a company team when none exist
-    so CSV import and the team switcher work without manual admin setup.
+    Return teams the user may act as.
+
+    Reps and managers work inside a team, so one with no team yet joins the company's first
+    team (created if the company has none) and CSV import and the team switcher just work.
+    MD and admin work across the company: they see every team without joining any, so they
+    never land in a team's chat or member list. Purchase works on no team.
     """
     if user.company_id is None:
+        return []
+
+    role = user_role(user)
+    if role in ("md", "admin"):
+        return apply_company_scope(db.query(Team), Team, user).order_by(Team.name.asc()).all()
+    if role not in ("sales", "manager"):
         return []
 
     teams = _membership_teams(db, user)
