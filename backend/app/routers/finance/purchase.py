@@ -18,7 +18,7 @@ from app.models.core.enums import InvoiceStatus
 from app.models.finance.ledger import LedgerEntry
 from app.utils.notify import send_notification, notify_role_users
 from app.services.finance.gst import compute_gst
-from app.services.sales.product_lines import rename_stock_out
+from app.services.sales.product_lines import rename_stock_out, return_stock
 
 router = APIRouter()
 
@@ -267,6 +267,7 @@ def reject_sale(
     _ensure_waiting_for_approval(invoice)
     
     invoice.status = InvoiceStatus.CANCELLED  # Rejected invoices are marked as cancelled
+    return_stock(db, invoice, current_user.id)
     if not hasattr(invoice, 'notes') or not invoice.notes:
         invoice.notes = f"Rejected by purchase dept: {reason}"
     else:

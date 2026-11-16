@@ -636,6 +636,7 @@ def create_invoice(
             unit_price=it.unit_price or 0.0,
             total=line_total,
             hsn=(it.hsn or "").strip() or None,
+            stock_item_id=it.stock_item_id,
         ))
     for sid, qty in requested_stock.items():
         record_stock_out(db, company_id=principal.company_id, user_id=None, stock_item=stock_map[sid],

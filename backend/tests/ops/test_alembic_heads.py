@@ -14,7 +14,7 @@ def _scripts() -> ScriptDirectory:
 def test_alembic_has_exactly_one_head():
     heads = _scripts().get_heads()
     assert len(heads) == 1, heads
-    assert heads == ["046_schema_drift_cleanup"]
+    assert heads == ["047_invoice_item_stock"]
 
 
 def test_catchup_revision_follows_015():
@@ -177,3 +177,9 @@ def test_twilio_voice_revision_follows_044():
     rev = _scripts().get_revision("045_twilio_voice")
     assert rev is not None
     assert rev.down_revision == "044_invite_hashed_password"
+
+
+def test_invoice_item_stock_revision_follows_046():
+    rev = _scripts().get_revision("047_invoice_item_stock")
+    assert rev is not None
+    assert rev.down_revision == "046_schema_drift_cleanup"

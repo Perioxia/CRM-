@@ -229,6 +229,7 @@ def create_invoice(
             total=line.line_amount,
             hsn=line.hsn,
             product_id=line.product_id,
+            stock_item_id=line.deduct_stock_item_id,
             tax_rate=line.tax_rate,
             tax=line.tax,
         ))
