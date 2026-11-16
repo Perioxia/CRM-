@@ -190,7 +190,7 @@ def get_client(
             {
                 "id": note.id,
                 "content": note.content,
-                "author": note.author_name or "System",
+                "author": note.created_by.full_name if note.created_by else "System",
                 "date": note.created_at.strftime("%b %d, %Y") if note.created_at else None
             }
             for note in notes
@@ -552,7 +552,7 @@ def add_client_note(
         action="note_added",
         admin_id=current_user.id,
         admin_name=current_user.full_name,
-        after_value=content
+        after_value=text
     )
     db.add(log)
     

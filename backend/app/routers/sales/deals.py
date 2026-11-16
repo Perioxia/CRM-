@@ -22,6 +22,7 @@ from app.models.sales.pipeline import Pipeline, PipelineStage
 from app.services.sales.pipeline_seed import attach_default_stages, ensure_default_pipeline
 from app.services.sales.custom_fields import get_values_map, set_values
 from app.services.sales.lead_access import ensure_can_work_lead_id
+from app.services.sales.lead_ownership import user_on_team
 from app.services.sales.deal_views import apply_deal_view
 from app.services.sales.deal_next_activity import (
     NextActivityRequired,
@@ -114,6 +115,30 @@ def _apply_role_scope(db: Session, query, current_user: User, active_team_id: Op
     return query
 
 
+def _owner_and_team_for_new_deal(db: Session, current_user: User, payload: DealCreate,
+                                  active_team_id: Optional[int]) -> tuple[Optional[int], Optional[int]]:
+    """A rep's new deal is their own; a rep's or manager's deal lands on a team they are on,
+    by default the active one. Otherwise the deal saves but its creator cannot see it."""
+    role = _role(current_user)
+    assigned_to_id = payload.assigned_to_id
+    team_id = payload.team_id
+    if role not in ("sales", "manager"):
+        return assigned_to_id, team_id
+    if role == "sales":
+        if assigned_to_id is not None and assigned_to_id != current_user.id:
+            raise HTTPException(status_code=403, detail="Sales executives cannot assign deals to others")
+        assigned_to_id = current_user.id
+    if team_id is None:
+        team_id = active_team_id
+    elif not user_on_team(db, current_user, team_id):
+        raise HTTPException(status_code=403, detail="You are not a member of the selected team")
+    if assigned_to_id is not None and team_id is not None and assigned_to_id != current_user.id:
+        assignee = db.query(User).filter(User.id == assigned_to_id).first()
+        if assignee is None or not user_on_team(db, assignee, team_id):
+            raise HTTPException(status_code=403, detail="Cannot assign a deal outside its team")
+    return assigned_to_id, team_id
+
+
 def _ensure_deal_row_access(deal: Deal, current_user: User, active_team_id: Optional[int]) -> None:
     """Mirror leads.py get_lead's role check on by-id access."""
     role = _role(current_user)
@@ -182,6 +207,7 @@ def create_deal(payload: DealCreate, db: Session = Depends(get_db),
         lead_id=payload.lead_id, client_id=payload.client_id,
     )
     ensure_can_work_lead_id(db, current_user, active_team_id, payload.lead_id)
+    assigned_to_id, team_id = _owner_and_team_for_new_deal(db, current_user, payload, active_team_id)
 
     pipeline_id = payload.pipeline_id
     stage_id = payload.stage_id
@@ -213,9 +239,9 @@ def create_deal(payload: DealCreate, db: Session = Depends(get_db),
         expected_close=payload.expected_close,
         lead_id=payload.lead_id,
         client_id=payload.client_id,
-        assigned_to_id=payload.assigned_to_id,
+        assigned_to_id=assigned_to_id,
         created_by_id=current_user.id,
-        team_id=payload.team_id,
+        team_id=team_id,
         source=payload.source,
     )
     db.add(deal)

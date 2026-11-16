@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException
 from sqlalchemy import func
@@ -26,17 +26,19 @@ def serialize_blast(row: MassEmailBlast) -> dict:
     }
 
 
-def _utc_today():
-    return datetime.now(timezone.utc).date()
+def _utc_now() -> datetime:
+    """sent_at has no time zone, so it holds UTC written by us, never the database session's local time."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 def sent_today(db: Session, company_id: int) -> int:
-    today = _utc_today().isoformat()
+    start = _utc_now().replace(hour=0, minute=0, second=0, microsecond=0)
     total = (
         db.query(func.coalesce(func.sum(MassEmailBlast.sent_count), 0))
         .filter(
             MassEmailBlast.company_id == company_id,
-            func.date(MassEmailBlast.sent_at) == today,
+            MassEmailBlast.sent_at >= start,
+            MassEmailBlast.sent_at < start + timedelta(days=1),
         )
         .scalar()
     )
@@ -194,7 +196,7 @@ def send_mass_email(
         sent_count=sent,
         failed_count=failed,
         skipped_count=skipped,
-        sent_at=datetime.now(timezone.utc),
+        sent_at=_utc_now(),
     )
     db.add(row)
     db.commit()

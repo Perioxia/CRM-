@@ -15,7 +15,7 @@ def _admin(client, db, code, role="admin"):
 
 @patch("app.services.sales.crm_email.send_email", return_value=True)
 def test_blast_leads(mock_send, client, db):
-    _admin(client, db, "MEAPI1")
+    _admin(client, db, "MA1")
     client.post("/api/leads", json={"name": "Ravi", "email": "ravi@x.com"})
     listed = client.get("/api/mass-email")
     assert listed.status_code == 200, listed.text
@@ -32,7 +32,7 @@ def test_blast_leads(mock_send, client, db):
 
 
 def test_sales_forbidden(client, db):
-    _admin(client, db, "MEAPI2", role="sales")
+    _admin(client, db, "MA2", role="sales")
     assert client.get("/api/mass-email").status_code == 403
     assert client.post("/api/mass-email", json={
         "subject": "Hi", "body": "Hello", "audience": "leads",
@@ -40,7 +40,7 @@ def test_sales_forbidden(client, db):
 
 
 def test_explicit_ids(client, db):
-    _admin(client, db, "MEAPI3")
+    _admin(client, db, "MA3")
     lead_id = client.post("/api/leads", json={"name": "Ravi", "email": "r@x.com"}).json()["id"]
     with patch("app.services.sales.crm_email.send_email", return_value=True):
         sent = client.post("/api/mass-email", json={
