@@ -26,9 +26,10 @@ def churn_for_client(db: Session, company_id: int, client) -> dict:
     return result
 
 
-def ranked_churn(db: Session, company_id: int) -> list:
+def ranked_churn(db: Session, company_id: int, clients: list | None = None) -> list:
     from app.models.sales.client import Client
-    clients = db.query(Client).filter(Client.company_id == company_id).all()
+    if clients is None:
+        clients = db.query(Client).filter(Client.company_id == company_id).all()
     scored = [churn_for_client(db, company_id, c) for c in clients]
     scored = [s for s in scored if s["risk"] is not None]
     scored.sort(key=lambda s: s["risk"], reverse=True)

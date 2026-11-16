@@ -15,6 +15,7 @@ from app.models.sales.lead import Lead
 from app.models.sales.client import Client
 from app.models.finance.invoice import Invoice
 from app.services.sales.lead_access import lead_page_path, scope_visible_leads, user_role
+from app.services.sales.record_access import scope_client_records, scope_clients
 
 router = APIRouter()
 
@@ -48,7 +49,7 @@ def global_search(
         })
 
     # Search clients
-    client_q = apply_company_scope(db.query(Client), Client, current_user)
+    client_q = scope_clients(apply_company_scope(db.query(Client), Client, current_user), current_user, active_team_id)
     clients = client_q.filter(
         or_(Client.name.ilike(term), Client.email.ilike(term), Client.company.ilike(term))
     ).limit(5).all()
@@ -59,11 +60,14 @@ def global_search(
             "title": c.name,
             "subtitle": c.company or c.email or "",
             "status": "Active",
-            "url": f"/{role}/clients/{c.id}" if role in ('sales', 'manager') else f"/md/clients"
+            "url": f"/{role}/clients/{c.id}" if role in ("sales", "manager", "md") else "/md/clients"
         })
 
     # Search invoices
-    inv_q = apply_company_scope(db.query(Invoice), Invoice, current_user)
+    inv_q = scope_client_records(
+        apply_company_scope(db.query(Invoice), Invoice, current_user), Invoice, current_user, active_team_id,
+        include_client=False,
+    )
     invoices = inv_q.filter(
         Invoice.invoice_number.ilike(term)
     ).limit(5).all()
@@ -74,7 +78,7 @@ def global_search(
             "title": inv.invoice_number,
             "subtitle": f"₹{inv.total:,.2f}" if inv.total else "₹0.00",
             "status": inv.status,
-            "url": f"/{role}/invoices"
+            "url": f"/{role}/invoices/{inv.id}" if role in ("sales", "manager", "md", "purchase") else f"/{role}/invoices"
         })
 
     return {"results": results, "total": len(results), "query": q}

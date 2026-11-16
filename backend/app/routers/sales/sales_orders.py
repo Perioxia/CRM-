@@ -7,8 +7,9 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.core.user import User
 from app.models.sales.sales_order import SalesOrder
+from app.services.sales.record_access import ensure_can_view_client_record, scope_client_records
 from app.services.sales.sales_order_lifecycle import convert_sales_order_to_invoice
-from app.utils.dependencies import apply_company_scope, ensure_company_access, get_current_user
+from app.utils.dependencies import apply_company_scope, ensure_company_access, get_active_team_id, get_current_user
 
 router = APIRouter()
 
@@ -54,13 +55,14 @@ def _serialize(order: SalesOrder) -> dict:
     }
 
 
-def _get_order(db: Session, current_user: User, order_id: int) -> SalesOrder:
+def _get_order(db: Session, current_user: User, order_id: int, active_team_id: Optional[int]) -> SalesOrder:
     order = apply_company_scope(db.query(SalesOrder), SalesOrder, current_user).filter(
         SalesOrder.id == order_id
     ).first()
     if order is None:
         raise HTTPException(status_code=404, detail="Sales order not found")
     ensure_company_access(order, current_user)
+    ensure_can_view_client_record(db, order, current_user, active_team_id, detail="You do not have access to this sales order")
     return order
 
 
@@ -71,8 +73,11 @@ def list_sales_orders(
     status: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    active_team_id: Optional[int] = Depends(get_active_team_id),
 ):
-    query = apply_company_scope(db.query(SalesOrder), SalesOrder, current_user)
+    query = scope_client_records(
+        apply_company_scope(db.query(SalesOrder), SalesOrder, current_user), SalesOrder, current_user, active_team_id
+    )
     if deal_id is not None:
         query = query.filter(SalesOrder.deal_id == deal_id)
     if client_id is not None:
@@ -88,8 +93,9 @@ def get_sales_order(
     order_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    active_team_id: Optional[int] = Depends(get_active_team_id),
 ):
-    return _serialize(_get_order(db, current_user, order_id))
+    return _serialize(_get_order(db, current_user, order_id, active_team_id))
 
 
 @router.post("/{order_id:int}/invoice")
@@ -97,7 +103,8 @@ def invoice_sales_order(
     order_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    active_team_id: Optional[int] = Depends(get_active_team_id),
 ):
-    order = _get_order(db, current_user, order_id)
+    order = _get_order(db, current_user, order_id, active_team_id)
     order = convert_sales_order_to_invoice(db, order)
     return _serialize(order)
