@@ -7,6 +7,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.models.core.user import User
+from app.models.finance.invoice import Invoice, InvoiceItem
 from app.models.finance.ledger import LedgerEntry
 from app.models.ops.stock_item import StockItem
 from app.models.sales.product import Product
@@ -177,3 +178,39 @@ def rename_stock_out(db: Session, company_id: int, invoice_id: int, order_number
     )
     for row in rows:
         row.data = {**row.data, "remarks": f"Sold on order {order_number}"}
+
+
+def return_stock(db: Session, invoice: Invoice, user_id: Optional[int]) -> None:
+    """Put back what a rejected order took. Lines from before stock was recorded on them have nothing to return."""
+    requested: dict[int, int] = {}
+    for item in db.query(InvoiceItem).filter(InvoiceItem.invoice_id == invoice.id, InvoiceItem.stock_item_id.isnot(None)):
+        requested[item.stock_item_id] = requested.get(item.stock_item_id, 0) + int(item.quantity or 0)
+    if not requested:
+        return
+    rows = (
+        db.query(StockItem)
+        .filter(StockItem.company_id == invoice.company_id, StockItem.id.in_(requested.keys()))
+        .with_for_update()
+        .all()
+    )
+    for stock_item in rows:
+        qty = requested[stock_item.id]
+        stock_item.quantity = int(stock_item.quantity or 0) + qty
+        stock_item.updated_by_id = user_id
+        db.add(LedgerEntry(
+            company_id=invoice.company_id,
+            ledger_slug="stock_register",
+            data={
+                "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+                "product": stock_item.name,
+                "category": stock_item.category or "",
+                "brand": "",
+                "qty_in": qty,
+                "qty_out": 0,
+                "purchase_rate": float(stock_item.unit_price or 0),
+                "sale_rate": 0,
+                "remarks": f"Returned: order {invoice.invoice_number} rejected",
+                "invoice_id": invoice.id,
+            },
+            created_by=user_id,
+        ))

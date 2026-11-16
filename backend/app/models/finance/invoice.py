@@ -79,6 +79,7 @@ class InvoiceItem(Base):
     total = Column(Numeric(12, 2), default=0)
     hsn = Column(String(20), nullable=True)
     product_id = Column(Integer, ForeignKey("products.id", ondelete="SET NULL"), nullable=True)
+    stock_item_id = Column(Integer, ForeignKey("stock_items.id", ondelete="SET NULL"), nullable=True)
     tax_rate = Column(Numeric(5, 2), nullable=True)
     tax = Column(Numeric(12, 2), default=0)
     

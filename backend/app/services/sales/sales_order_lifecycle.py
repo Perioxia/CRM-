@@ -153,6 +153,7 @@ def convert_sales_order_to_invoice(db: Session, order: SalesOrder) -> SalesOrder
             unit_price=item.unit_price,
             total=item.total,
             product_id=item.product_id,
+            stock_item_id=deduct_id,
             hsn=item.hsn,
             tax_rate=item.tax_rate,
             tax=item.tax,

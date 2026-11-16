@@ -202,6 +202,6 @@ def test_a_database_shaped_like_production_ends_matching_the_models(at_045, monk
         )).scalar()
         conn.execute(text(f"ALTER TABLE quotes DROP CONSTRAINT {plan_fk}"))
 
-    _alembic(name, monkeypatch, AFTER)
+    _alembic(name, monkeypatch, "head")  # the models describe the newest migration, not 046
 
     assert _drift(_url(name)) == []

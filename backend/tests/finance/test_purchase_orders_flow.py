@@ -175,3 +175,49 @@ def test_stock_register_shows_the_final_order_number_after_approval(client, db, 
     assert final != order["invoice_number"] and not final.startswith("DRAFT-")
     remarks = [r["remarks"] for r in _register(client, "Fan") if int(r["qty_out"]) > 0]
     assert sorted(remarks) == sorted([f"Sold on order {final}", f"Sold on order {other['invoice_number']}"])
+
+
+def _stock(client):
+    return {i["sku"]: i["quantity"] for i in client.get("/api/inventory").json()["items"]}
+
+
+def test_each_order_line_remembers_the_stock_it_took(client, db, shop):
+    from app.models.finance.invoice import InvoiceItem
+
+    order = _order(client, shop)
+    lines = {row.description: row.stock_item_id for row in db.query(InvoiceItem).filter(InvoiceItem.invoice_id == order["id"])}
+    assert lines == {"Fan": shop["fan"]["id"], "Install": None, "Bulb": shop["bulb"]["id"]}
+
+
+def test_rejecting_gives_the_stock_back_once(client, db, shop):
+    order = _order(client, shop)
+    _as(client, shop["buyer"])
+    assert _stock(client) == {"FAN": 90, "BLB": 36}
+    assert client.post(f"/api/purchase/sales/{order['id']}/reject", params={"reason": "x"}).status_code == 200
+    assert _stock(client) == {"FAN": 100, "BLB": 40}
+    assert client.post(f"/api/purchase/sales/{order['id']}/reject", params={"reason": "x"}).status_code == 400
+    assert _stock(client) == {"FAN": 100, "BLB": 40}
+
+    for product, sku in (("Fan", "FAN"), ("Bulb", "BLB")):
+        rows = _register(client, product)
+        returned = [r for r in rows if r["remarks"] == f"Returned: order {order['invoice_number']} rejected"]
+        assert len(returned) == 1
+        assert sum(int(r["qty_in"]) - int(r["qty_out"]) for r in rows) == _stock(client)[sku]
+
+
+def test_approving_keeps_the_stock_taken(client, db, shop):
+    order = _order(client, shop)
+    _as(client, shop["buyer"])
+    client.post(f"/api/purchase/sales/{order['id']}/approve")
+    assert _stock(client) == {"FAN": 90, "BLB": 36}
+
+
+def test_an_order_from_before_this_change_is_rejected_without_touching_stock(client, db, shop):
+    from app.models.finance.invoice import InvoiceItem
+
+    order = _order(client, shop)
+    db.query(InvoiceItem).filter(InvoiceItem.invoice_id == order["id"]).update({InvoiceItem.stock_item_id: None})
+    db.commit()
+    _as(client, shop["buyer"])
+    assert client.post(f"/api/purchase/sales/{order['id']}/reject", params={"reason": "x"}).status_code == 200
+    assert _stock(client) == {"FAN": 90, "BLB": 36}
