@@ -31,7 +31,8 @@ from app.services.sales.approvals import (
     reject_quote as reject_quote_approval,
 )
 from app.models.core.enums import ApprovalStatus
-from app.utils.dependencies import apply_company_scope, ensure_company_access, get_current_user, require_admin_or_md
+from app.services.sales.record_access import ensure_can_view_client, ensure_can_view_client_record, scope_client_records
+from app.utils.dependencies import apply_company_scope, ensure_company_access, get_active_team_id, get_current_user, require_admin_or_md
 
 router = APIRouter()
 
@@ -138,22 +139,25 @@ def _payment_url(db: Session, quote: Quote):
     return invoice.payment_url if invoice else None
 
 
-def _get_quote(db: Session, current_user: User, quote_id: int) -> Quote:
+def _get_quote(db: Session, current_user: User, quote_id: int, active_team_id: Optional[int]) -> Quote:
     quote = apply_company_scope(db.query(Quote), Quote, current_user).filter(Quote.id == quote_id).first()
     if quote is None:
         raise HTTPException(status_code=404, detail="Quote not found")
     ensure_company_access(quote, current_user)
+    ensure_can_view_client_record(db, quote, current_user, active_team_id, detail="You do not have access to this quote")
     return quote
 
 
 @router.post("", status_code=201)
-def create_quote(payload: QuoteCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def create_quote(payload: QuoteCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user),
+                 active_team_id: Optional[int] = Depends(get_active_team_id)):
     if current_user.company_id is None:
         raise HTTPException(status_code=403, detail="User must be assigned to a company")
 
     client = apply_company_scope(db.query(Client), Client, current_user).filter(Client.id == payload.client_id).first()
     if client is None:
         raise HTTPException(status_code=400, detail="client_id not found in your company")
+    ensure_can_view_client(client, current_user, active_team_id)
 
     if payload.deal_id is not None:
         deal = apply_company_scope(db.query(Deal), Deal, current_user).filter(Deal.id == payload.deal_id).first()
@@ -341,8 +345,9 @@ def list_quotes(
     client_id: Optional[int] = Query(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    active_team_id: Optional[int] = Depends(get_active_team_id),
 ):
-    query = apply_company_scope(db.query(Quote), Quote, current_user)
+    query = scope_client_records(apply_company_scope(db.query(Quote), Quote, current_user), Quote, current_user, active_team_id)
     if deal_id is not None:
         query = query.filter(Quote.deal_id == deal_id)
     if client_id is not None:
@@ -352,8 +357,9 @@ def list_quotes(
 
 
 @router.get("/{quote_id:int}")
-def get_quote(quote_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    quote = _get_quote(db, current_user, quote_id)
+def get_quote(quote_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user),
+              active_team_id: Optional[int] = Depends(get_active_team_id)):
+    quote = _get_quote(db, current_user, quote_id, active_team_id)
     return _serialize(quote, payment_url=_payment_url(db, quote))
 
 
@@ -362,8 +368,9 @@ def download_quote_pdf(
     quote_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    active_team_id: Optional[int] = Depends(get_active_team_id),
 ):
-    quote = _get_quote(db, current_user, quote_id)
+    quote = _get_quote(db, current_user, quote_id, active_team_id)
     pdf = build_quote_pdf(db, quote)
     safe_name = (quote.quote_number or f"quote-{quote.id}").replace('"', "")
     return Response(
@@ -374,8 +381,9 @@ def download_quote_pdf(
 
 
 @router.post("/{quote_id:int}/share")
-def share_quote(quote_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    quote = _get_quote(db, current_user, quote_id)
+def share_quote(quote_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user),
+                active_team_id: Optional[int] = Depends(get_active_team_id)):
+    quote = _get_quote(db, current_user, quote_id, active_team_id)
     raw, _ = apply_share(quote)
     db.commit()
     db.refresh(quote)
@@ -388,16 +396,18 @@ def share_quote(quote_id: int, db: Session = Depends(get_db), current_user: User
 
 
 @router.delete("/{quote_id:int}/share", status_code=204)
-def revoke_quote_share(quote_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    quote = _get_quote(db, current_user, quote_id)
+def revoke_quote_share(quote_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user),
+                       active_team_id: Optional[int] = Depends(get_active_team_id)):
+    quote = _get_quote(db, current_user, quote_id, active_team_id)
     revoke_share(quote)
     db.commit()
     return Response(status_code=204)
 
 
 @router.post("/{quote_id:int}/accept")
-def accept_quote(quote_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    quote = _get_quote(db, current_user, quote_id)
+def accept_quote(quote_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user),
+                 active_team_id: Optional[int] = Depends(get_active_team_id)):
+    quote = _get_quote(db, current_user, quote_id, active_team_id)
     try:
         assert_quote_approved_for_accept(quote)
     except ApprovalRequired as err:
@@ -412,7 +422,7 @@ def approve_quote_route(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_admin_or_md),
 ):
-    quote = _get_quote(db, current_user, quote_id)
+    quote = _get_quote(db, current_user, quote_id, None)
     if quote.approval_status != ApprovalStatus.PENDING.value:
         raise HTTPException(status_code=400, detail="Quote is not pending approval")
     quote = approve_quote(db, quote, current_user)
@@ -424,8 +434,9 @@ def reject_quote(
     quote_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    active_team_id: Optional[int] = Depends(get_active_team_id),
 ):
-    quote = _get_quote(db, current_user, quote_id)
+    quote = _get_quote(db, current_user, quote_id, active_team_id)
     if quote.approval_status == ApprovalStatus.PENDING.value:
         role = getattr(current_user.role, "value", str(current_user.role or "")).lower()
         if role not in ("admin", "md"):

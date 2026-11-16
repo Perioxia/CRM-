@@ -20,6 +20,7 @@ from app.models.sales.audit import AuditLog
 from app.models.sales.lead import Lead
 from app.schemas.sales import ClientCreate, ClientUpdate, ClientListResponse, NoteCreate, note_text
 from app.services.predictions.churn_service import churn_for_client
+from app.services.sales.record_access import ensure_can_view_client
 from app.schemas.admin import MessageResponse
 from app.utils.helpers import normalize_email, normalize_phone
 from app.services.finance.gst import normalize_gstin
@@ -211,11 +212,13 @@ def get_client(
 
 @router.get("/{client_id}/churn")
 def get_client_churn(client_id: int, db: Session = Depends(get_db),
-                     current_user: User = Depends(get_current_user)):
+                     current_user: User = Depends(get_current_user),
+                     active_team_id: Optional[int] = Depends(get_active_team_id)):
     client = apply_company_scope(db.query(Client), Client, current_user).filter(Client.id == client_id).first()
     if client is None:
         raise HTTPException(status_code=404, detail="Client not found")
     ensure_company_access(client, current_user)
+    ensure_can_view_client(client, current_user, active_team_id)
     return churn_for_client(db, current_user.company_id, client)
 
 

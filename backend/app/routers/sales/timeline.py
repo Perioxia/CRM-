@@ -12,7 +12,10 @@ from app.utils.dependencies import get_current_user, apply_company_scope, get_ac
 from app.models.core.user import User
 from app.models.sales.audit import AuditLog
 from app.services.sales.activity_timeline import build_activity_feed, require_timeline_parent
+from app.models.finance.invoice import Invoice
+from app.routers.sales.deals import _ensure_deal_row_access
 from app.services.sales.lead_access import ensure_can_view_lead
+from app.services.sales.record_access import ensure_can_view_client, ensure_can_view_client_record
 from app.utils.datetime_json import isoformat_utc
 
 router = APIRouter()
@@ -36,6 +39,17 @@ def get_timeline(
         if lead.deleted_at is not None:
             raise HTTPException(status_code=404, detail="Not found")
         ensure_can_view_lead(lead, current_user, active_team_id, db)
+    elif entity_type == "client":
+        client = require_timeline_parent(db, current_user, "client", entity_id)
+        ensure_can_view_client(client, current_user, active_team_id)
+    elif entity_type == "deal":
+        deal = require_timeline_parent(db, current_user, "deal", entity_id)
+        _ensure_deal_row_access(deal, current_user, active_team_id)
+    elif entity_type == "invoice":
+        invoice = apply_company_scope(db.query(Invoice), Invoice, current_user).filter(Invoice.id == entity_id).first()
+        if invoice is None:
+            raise HTTPException(status_code=404, detail="Not found")
+        ensure_can_view_client_record(db, invoice, current_user, active_team_id, include_client=False)
     if entity_type in _FEED:
         return build_activity_feed(db, current_user, entity_type, entity_id, skip, limit)
 

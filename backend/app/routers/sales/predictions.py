@@ -9,9 +9,12 @@ from app.database import get_db
 from app.models.core.user import User
 from app.models.sales.prediction import PredictionModel
 from app.services.predictions.convert import train_convert, CONVERT_KIND
+from app.models.sales.client import Client
 from app.services.predictions.churn_service import ranked_churn
+from app.services.sales.record_access import scope_clients
 from app.utils.dependencies import (
     apply_company_scope,
+    get_active_team_id,
     get_current_user,
     require_admin_or_md,
 )
@@ -60,10 +63,14 @@ def list_models(db: Session = Depends(get_db),
 @router.get("/churn")
 def churn_list(band: Optional[str] = Query(None),
                db: Session = Depends(get_db),
-               current_user: User = Depends(get_current_user)):
+               current_user: User = Depends(get_current_user),
+               active_team_id: Optional[int] = Depends(get_active_team_id)):
     if current_user.company_id is None:
         raise HTTPException(status_code=403, detail="User must belong to a company")
-    rows = ranked_churn(db, current_user.company_id)
+    clients = scope_clients(
+        db.query(Client).filter(Client.company_id == current_user.company_id), current_user, active_team_id
+    ).all()
+    rows = ranked_churn(db, current_user.company_id, clients)
     if band:
         rows = [r for r in rows if r["band"] == band]
     return {"items": rows, "total": len(rows)}

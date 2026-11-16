@@ -11,7 +11,8 @@ from app.models.sales.client import Client
 from app.services.finance.gst import normalize_gstin
 from app.services.sales.enrichment import apply_account as enrich_account
 from app.utils.datetime_json import isoformat_utc
-from app.utils.dependencies import apply_company_scope, ensure_company_access, get_current_user
+from app.services.sales.record_access import scope_clients
+from app.utils.dependencies import apply_company_scope, ensure_company_access, get_active_team_id, get_current_user
 
 router = APIRouter()
 
@@ -53,8 +54,24 @@ def get_account_or_404(db: Session, current_user: User, account_id: int) -> Acco
     return row
 
 
-def serialize_account(account: Account, contacts: list[Client] | None = None) -> dict:
-    contact_rows = contacts if contacts is not None else list(account.contacts or [])
+def visible_contacts(db: Session, current_user: User, active_team_id: Optional[int], account_ids: list[int]) -> dict[int, list[Client]]:
+    """Each account's contacts that this user may see, by account id."""
+    grouped: dict[int, list[Client]] = {account_id: [] for account_id in account_ids}
+    if not account_ids:
+        return grouped
+    rows = (
+        scope_clients(apply_company_scope(db.query(Client), Client, current_user), current_user, active_team_id)
+        .filter(Client.account_id.in_(account_ids))
+        .order_by(Client.name.asc())
+        .all()
+    )
+    for row in rows:
+        grouped[row.account_id].append(row)
+    return grouped
+
+
+def serialize_account(account: Account, contacts: list[Client]) -> dict:
+    contact_rows = contacts
     return {
         "id": account.id,
         "name": account.name,
@@ -77,6 +94,7 @@ def list_accounts(
     search: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    active_team_id: Optional[int] = Depends(get_active_team_id),
 ):
     if current_user.company_id is None:
         raise HTTPException(status_code=403, detail="User must belong to a company")
@@ -85,7 +103,8 @@ def list_accounts(
         pattern = f"%{search.strip()}%"
         query = query.filter(Account.name.ilike(pattern))
     rows = query.order_by(Account.name.asc()).all()
-    return {"items": [serialize_account(a) for a in rows], "total": len(rows)}
+    contacts = visible_contacts(db, current_user, active_team_id, [a.id for a in rows])
+    return {"items": [serialize_account(a, contacts[a.id]) for a in rows], "total": len(rows)}
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
@@ -110,7 +129,7 @@ def create_account(
     db.add(account)
     db.commit()
     db.refresh(account)
-    return serialize_account(account, contacts=[])
+    return serialize_account(account, [])
 
 
 @router.get("/{account_id:int}")
@@ -118,15 +137,10 @@ def get_account(
     account_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    active_team_id: Optional[int] = Depends(get_active_team_id),
 ):
     account = get_account_or_404(db, current_user, account_id)
-    contacts = (
-        apply_company_scope(db.query(Client), Client, current_user)
-        .filter(Client.account_id == account.id)
-        .order_by(Client.name.asc())
-        .all()
-    )
-    return serialize_account(account, contacts=contacts)
+    return serialize_account(account, visible_contacts(db, current_user, active_team_id, [account.id])[account.id])
 
 
 @router.post("/{account_id:int}/enrich")
@@ -134,10 +148,11 @@ def enrich_account_route(
     account_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    active_team_id: Optional[int] = Depends(get_active_team_id),
 ):
     account = get_account_or_404(db, current_user, account_id)
     account = enrich_account(db, account)
-    return serialize_account(account)
+    return serialize_account(account, visible_contacts(db, current_user, active_team_id, [account.id])[account.id])
 
 
 @router.patch("/{account_id:int}")
@@ -146,6 +161,7 @@ def patch_account(
     payload: AccountPatch,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    active_team_id: Optional[int] = Depends(get_active_team_id),
 ):
     account = get_account_or_404(db, current_user, account_id)
     data = payload.model_dump(exclude_unset=True)
@@ -164,7 +180,7 @@ def patch_account(
         account.address = (data["address"] or "").strip() or None
     db.commit()
     db.refresh(account)
-    return serialize_account(account)
+    return serialize_account(account, visible_contacts(db, current_user, active_team_id, [account.id])[account.id])
 
 
 @router.delete("/{account_id:int}", status_code=status.HTTP_204_NO_CONTENT)

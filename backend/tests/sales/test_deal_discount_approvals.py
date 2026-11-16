@@ -86,7 +86,7 @@ def test_discounted_quote_pending_blocks_accept(client, db):
     company = _company(db, "AP4")
     admin = create_active_user(db, email="admin@ap4.com", role="admin", company_id=company.id)
     sales = create_active_user(db, email="sales@ap4.com", role="sales", company_id=company.id)
-    customer = create_client(db, company_id=company.id, name="Buyer", assigned_to_id=admin.id)
+    customer = create_client(db, company_id=company.id, name="Buyer", assigned_to_id=sales.id)
     login_user(client, admin.email)
     _set_thresholds(client, discount_pct=10)
     product = client.post("/api/products", json={
@@ -109,7 +109,7 @@ def test_approve_quote_then_accept(client, db):
     company = _company(db, "AP5")
     admin = create_active_user(db, email="admin@ap5.com", role="admin", company_id=company.id)
     sales = create_active_user(db, email="sales@ap5.com", role="sales", company_id=company.id)
-    customer = create_client(db, company_id=company.id, name="Buyer", assigned_to_id=admin.id)
+    customer = create_client(db, company_id=company.id, name="Buyer", assigned_to_id=sales.id)
     login_user(client, admin.email)
     _set_thresholds(client, discount_pct=5)
     product = client.post("/api/products", json={
@@ -136,7 +136,7 @@ def test_pending_queue_lists_deals_and_quotes(client, db):
     company = _company(db, "AP6")
     admin = create_active_user(db, email="admin@ap6.com", role="admin", company_id=company.id)
     sales = create_active_user(db, email="sales@ap6.com", role="sales", company_id=company.id)
-    customer = create_client(db, company_id=company.id, name="Buyer", assigned_to_id=admin.id)
+    customer = create_client(db, company_id=company.id, name="Buyer", assigned_to_id=sales.id)
     login_user(client, admin.email)
     _set_thresholds(client, deal_amount="1", discount_pct=1)
     product = client.post("/api/products", json={

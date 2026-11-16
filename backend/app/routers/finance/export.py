@@ -14,6 +14,7 @@ from datetime import datetime
 from app.database import get_db
 from app.utils.dependencies import get_current_user, apply_company_scope, get_active_team_id
 from app.services.sales.lead_access import scope_visible_leads
+from app.services.sales.record_access import scope_client_records, scope_clients
 from app.models.core.user import User
 from app.models.sales.lead import Lead
 from app.models.sales.client import Client
@@ -81,10 +82,11 @@ def export_leads(
 @router.get("/clients")
 def export_clients(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    active_team_id: Optional[int] = Depends(get_active_team_id),
 ):
     """Export clients as CSV"""
-    query = apply_company_scope(db.query(Client), Client, current_user)
+    query = scope_clients(apply_company_scope(db.query(Client), Client, current_user), current_user, active_team_id)
     clients = query.order_by(Client.created_at.desc()).all()
 
     headers = ["ID", "Name", "Email", "Phone", "Company", "Address", "Created At"]
@@ -100,10 +102,14 @@ def export_clients(
 def export_invoices(
     status: Optional[str] = Query(None),
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user),
+    active_team_id: Optional[int] = Depends(get_active_team_id),
 ):
     """Export invoices as CSV"""
-    query = apply_company_scope(db.query(Invoice), Invoice, current_user)
+    query = scope_client_records(
+        apply_company_scope(db.query(Invoice), Invoice, current_user), Invoice, current_user, active_team_id,
+        include_client=False,
+    )
     if status:
         query = query.filter(Invoice.status == status)
     invoices = query.order_by(Invoice.created_at.desc()).all()
