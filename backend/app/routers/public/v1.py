@@ -20,6 +20,7 @@ from app.services.sales.api_keys import ApiPrincipal
 from app.services.sales.pipeline_seed import ensure_default_pipeline
 from app.services.finance.gst import compute_gst, normalize_gstin
 from app.services.sales.lead_fields import clean_lead_fields
+from app.services.sales.product_lines import record_stock_out
 from app.utils.helpers import normalize_email, normalize_phone
 from app.utils.api_principal import get_api_principal, require_api_write
 
@@ -581,9 +582,11 @@ def create_invoice(
         due = issued + timedelta(days=body.due_days)
 
     requested_stock: dict[int, int] = {}
+    stock_amounts: dict[int, float] = {}
     for it in body.items:
         if it.stock_item_id is not None:
             requested_stock[it.stock_item_id] = requested_stock.get(it.stock_item_id, 0) + int(it.quantity or 0)
+            stock_amounts[it.stock_item_id] = stock_amounts.get(it.stock_item_id, 0.0) + (it.quantity or 0) * (it.unit_price or 0)
     stock_map = {}
     if requested_stock:
         rows = (
@@ -634,6 +637,10 @@ def create_invoice(
             total=line_total,
             hsn=(it.hsn or "").strip() or None,
         ))
+    for sid, qty in requested_stock.items():
+        record_stock_out(db, company_id=principal.company_id, user_id=None, stock_item=stock_map[sid],
+                         quantity=qty, amount=stock_amounts[sid], order_number=invoice.invoice_number,
+                         invoice_id=invoice.id)
     db.commit()
     db.refresh(invoice)
     items = db.query(InvoiceItem).filter(InvoiceItem.invoice_id == invoice.id).all()

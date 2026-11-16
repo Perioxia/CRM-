@@ -450,10 +450,20 @@ def test_qa_sales_purchase_and_md_see_the_same_work(client, org):
         item["name"] == "QA Catalog Widget"
         for item in client.get("/api/products", params={"q": "QA Catalog"}).json()["items"]
     )
-    approved = client.post(f"/api/purchase/sales/{invoice_ids[0]}/approve")
+    # Invoices made from sales orders start out approved, so purchase has nothing left to decide on them.
+    assert client.post(f"/api/purchase/sales/{invoice_ids[0]}/approve").status_code == 400
+    waiting = []
+    for title in ("QA order to approve", "QA order to reject"):
+        made = client.post("/api/invoices", json={
+            "client_id": client_id,
+            "items": [{"description": title, "quantity": 1, "unit_price": 25}],
+        })
+        assert made.status_code == 201, made.text
+        waiting.append(made.json()["id"])
+    approved = client.post(f"/api/purchase/sales/{waiting[0]}/approve")
     assert approved.status_code == 200, approved.text
     rejected = client.post(
-        f"/api/purchase/sales/{invoice_ids[1]}/reject",
+        f"/api/purchase/sales/{waiting[1]}/reject",
         params={"reason": "QA reject"},
     )
     assert rejected.status_code == 200, rejected.text

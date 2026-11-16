@@ -158,7 +158,7 @@ def convert_sales_order_to_invoice(db: Session, order: SalesOrder) -> SalesOrder
             tax=item.tax,
         ))
 
-    low_ids = deduct_stock(db, actor, convert_lines)
+    low_ids = deduct_stock(db, actor, convert_lines, order_number=invoice.invoice_number, invoice_id=invoice.id)
     _notify_low_stock(db, order.company_id, low_ids)
 
     order.invoice_id = invoice.id

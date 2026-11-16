@@ -233,7 +233,7 @@ def create_invoice(
             tax=line.tax,
         ))
 
-    low_stock_alert_ids = deduct_stock(db, current_user, lines)
+    low_stock_alert_ids = deduct_stock(db, current_user, lines, order_number=invoice.invoice_number, invoice_id=invoice.id)
     _notify_low_stock(db, company_id, low_stock_alert_ids)
 
     db.commit()

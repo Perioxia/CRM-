@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Optional
 
@@ -6,6 +7,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.models.core.user import User
+from app.models.finance.ledger import LedgerEntry
 from app.models.ops.stock_item import StockItem
 from app.models.sales.product import Product
 from app.services.sales.price_books import resolve_product_unit_price
@@ -100,12 +102,38 @@ def resolve_sale_lines(
     return resolved
 
 
-def deduct_stock(db: Session, current_user: User, lines: list[ResolvedSaleLine]) -> set[int]:
+def record_stock_out(db: Session, *, company_id: int, user_id: Optional[int], stock_item: StockItem,
+                     quantity: int, amount, order_number: Optional[str], invoice_id: Optional[int]) -> None:
+    """Stock Register row for a sale, in the same shape as the rows the Stock page writes.
+    invoice_id lets the row follow the order when purchase gives it its final number."""
+    db.add(LedgerEntry(
+        company_id=company_id,
+        ledger_slug="stock_register",
+        data={
+            "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+            "product": stock_item.name,
+            "category": stock_item.category or "",
+            "brand": "",
+            "qty_in": 0,
+            "qty_out": quantity,
+            "purchase_rate": float(stock_item.unit_price or 0),
+            "sale_rate": round(float(amount) / quantity, 2) if quantity else 0,
+            "remarks": f"Sold on order {order_number}" if order_number else "Sold",
+            "invoice_id": invoice_id,
+        },
+        created_by=user_id,
+    ))
+
+
+def deduct_stock(db: Session, current_user: User, lines: list[ResolvedSaleLine],
+                 order_number: Optional[str] = None, invoice_id: Optional[int] = None) -> set[int]:
     requested: dict[int, int] = {}
+    amounts: dict[int, Decimal] = {}
     for line in lines:
         if line.deduct_stock_item_id is None:
             continue
         requested[line.deduct_stock_item_id] = requested.get(line.deduct_stock_item_id, 0) + int(line.quantity or 0)
+        amounts[line.deduct_stock_item_id] = amounts.get(line.deduct_stock_item_id, Decimal("0")) + Decimal(str(line.line_amount))
     if not requested:
         return set()
     rows = (
@@ -129,6 +157,23 @@ def deduct_stock(db: Session, current_user: User, lines: list[ResolvedSaleLine])
         stock_item = stock_map[sid]
         stock_item.quantity = int(stock_item.quantity or 0) - qty
         stock_item.updated_by_id = current_user.id
+        record_stock_out(db, company_id=stock_item.company_id, user_id=current_user.id, stock_item=stock_item,
+                         quantity=qty, amount=amounts[sid], order_number=order_number, invoice_id=invoice_id)
         if int(stock_item.quantity or 0) <= int(stock_item.reorder_level or 0):
             low.add(sid)
     return low
+
+
+def rename_stock_out(db: Session, company_id: int, invoice_id: int, order_number: str) -> None:
+    """When a draft order gets its final number, its Stock Register rows show that number too."""
+    rows = (
+        db.query(LedgerEntry)
+        .filter(
+            LedgerEntry.company_id == company_id,
+            LedgerEntry.ledger_slug == "stock_register",
+            LedgerEntry.data["invoice_id"].as_integer() == invoice_id,
+        )
+        .all()
+    )
+    for row in rows:
+        row.data = {**row.data, "remarks": f"Sold on order {order_number}"}

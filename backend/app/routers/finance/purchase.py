@@ -18,6 +18,7 @@ from app.models.core.enums import InvoiceStatus
 from app.models.finance.ledger import LedgerEntry
 from app.utils.notify import send_notification, notify_role_users
 from app.services.finance.gst import compute_gst
+from app.services.sales.product_lines import rename_stock_out
 
 router = APIRouter()
 
@@ -49,6 +50,13 @@ def require_purchase(current_user: User = Depends(get_current_user)) -> User:
     if current_user.role not in PURCHASE_ROLES:
         raise HTTPException(status_code=403, detail="Purchase department access required")
     return current_user
+
+
+def _ensure_waiting_for_approval(invoice: Invoice) -> None:
+    """Only a draft order waits for purchase. Approving or rejecting it twice, or a paid one, is refused."""
+    status = invoice.status.value if hasattr(invoice.status, "value") else str(invoice.status)
+    if status != InvoiceStatus.DRAFT.value:
+        raise HTTPException(status_code=400, detail=f"This order is already {status.lower()}")
 
 
 # ===============================
@@ -125,7 +133,7 @@ def list_sales_for_approval(
     if status:
         query = query.filter(Invoice.status == status.title())
     else:
-        query = query.filter(Invoice.status.in_([InvoiceStatus.DRAFT, InvoiceStatus.PENDING]))
+        query = query.filter(Invoice.status.in_([InvoiceStatus.DRAFT, InvoiceStatus.PENDING, InvoiceStatus.CANCELLED]))
     
     total = query.count()
     invoices = query.order_by(Invoice.created_at.desc()).offset(skip).limit(limit).all()
@@ -179,6 +187,7 @@ def get_sale_detail(
             "amount": invoice.total,
             "subtotal": invoice.subtotal,
             "tax": invoice.tax,
+            "discount": invoice.discount,
             "items": [{"description": i.description, "quantity": i.quantity, "total": i.total} for i in items]
         },
         "salesperson": {
@@ -200,6 +209,7 @@ def approve_sale(
     if not invoice:
         raise HTTPException(status_code=404, detail="Sale not found")
     ensure_company_access(invoice, current_user)
+    _ensure_waiting_for_approval(invoice)
     
     if invoice.invoice_number and invoice.invoice_number.startswith("DRAFT-"):
         from app.models.core.company_settings import CompanySettings
@@ -215,9 +225,9 @@ def approve_sale(
             new_number = f"{prefix}-{current_user.company_id:03d}-{count + 1:04d}"
             
         invoice.invoice_number = new_number
+        rename_stock_out(db, invoice.company_id, invoice.id, new_number)
 
     invoice.status = InvoiceStatus.PENDING  # Move from Draft to Pending (sent to client)
-    db.commit()
 
     # Notify invoice creator (usually sales/manager) that purchase approved it for sending.
     if invoice.created_by_id:
@@ -233,7 +243,8 @@ def approve_sale(
             dedupe_match_message=False,
             skip_if_unread_duplicate=True,
         )
-    
+    db.commit()
+
     return {
         "message": f"Sale {sale_id} approved successfully",
         "status": "Pending",
@@ -253,13 +264,13 @@ def reject_sale(
     if not invoice:
         raise HTTPException(status_code=404, detail="Sale not found")
     ensure_company_access(invoice, current_user)
+    _ensure_waiting_for_approval(invoice)
     
     invoice.status = InvoiceStatus.CANCELLED  # Rejected invoices are marked as cancelled
     if not hasattr(invoice, 'notes') or not invoice.notes:
         invoice.notes = f"Rejected by purchase dept: {reason}"
     else:
         invoice.notes = f"{invoice.notes}\n[Rejected: {reason}]"
-    db.commit()
 
     if invoice.created_by_id:
         send_notification(
@@ -274,7 +285,8 @@ def reject_sale(
             dedupe_match_message=False,
             skip_if_unread_duplicate=True,
         )
-    
+    db.commit()
+
     return {
         "message": f"Sale {sale_id} rejected",
         "reason": reason,
