@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useParams, usePathname, useRouter } from 'next/navigation';
 import { ArrowLeft, Loader2 } from 'lucide-react';
 import api from '../../services/api';
+import { useAuth } from '../../contexts/AuthContext';
 import { accountsHomePath, clientsHomePath } from '../../lib/leadsPaths';
 
 export default function AccountDetailPage() {
@@ -19,6 +20,8 @@ export default function AccountDetailPage() {
     const [name, setName] = useState('');
     const [saving, setSaving] = useState(false);
     const [enriching, setEnriching] = useState(false);
+    const { user } = useAuth();
+    const canEdit = ['manager', 'md', 'admin'].includes(user?.role);
 
     const load = async () => {
         if (!params?.id) return;
@@ -41,6 +44,7 @@ export default function AccountDetailPage() {
 
     const save = async (e) => {
         e.preventDefault();
+        if (!canEdit) return;
         setSaving(true);
         try {
             await api.patch(`/accounts/${params.id}`, { name: name.trim() });
@@ -107,11 +111,14 @@ export default function AccountDetailPage() {
                             id="account-name"
                             value={name}
                             onChange={(e) => setName(e.target.value)}
+                            readOnly={!canEdit}
                             className="flex-1 px-3 py-2 border border-slate-200 dark:border-slate-700 rounded-md text-sm bg-white dark:bg-slate-900"
                         />
-                        <button type="submit" disabled={saving} className="px-3 py-2 text-sm font-semibold rounded-md bg-slate-900 text-white disabled:opacity-50">
-                            {saving ? 'Saving…' : 'Save'}
-                        </button>
+                        {canEdit && (
+                            <button type="submit" disabled={saving} className="px-3 py-2 text-sm font-semibold rounded-md bg-slate-900 text-white disabled:opacity-50">
+                                {saving ? 'Saving…' : 'Save'}
+                            </button>
+                        )}
                     </div>
                     {account.website && <p className="text-sm text-slate-500 mt-3">{account.website}</p>}
                     {account.industry && <p className="text-sm text-slate-500 mt-1">{account.industry}</p>}
@@ -120,14 +127,18 @@ export default function AccountDetailPage() {
                             {account.linkedin_url}
                         </a>
                     )}
-                    <div className="mt-4 flex gap-3">
-                        <button type="button" onClick={enrich} disabled={enriching} className="text-sm font-medium text-slate-800 dark:text-slate-200 disabled:opacity-50">
-                            {enriching ? 'Enriching…' : 'Enrich'}
-                        </button>
-                    </div>
-                    <button type="button" onClick={remove} className="mt-6 text-sm text-red-600">
-                        Delete account
-                    </button>
+                    {canEdit && (
+                        <>
+                            <div className="mt-4 flex gap-3">
+                                <button type="button" onClick={enrich} disabled={enriching} className="text-sm font-medium text-slate-800 dark:text-slate-200 disabled:opacity-50">
+                                    {enriching ? 'Enriching…' : 'Enrich'}
+                                </button>
+                            </div>
+                            <button type="button" onClick={remove} className="mt-6 text-sm text-red-600">
+                                Delete account
+                            </button>
+                        </>
+                    )}
                 </form>
                 <div className="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-6">
                     <h2 className="text-sm font-semibold text-slate-800 dark:text-slate-200 mb-3">Contacts</h2>

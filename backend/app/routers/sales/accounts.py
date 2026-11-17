@@ -42,6 +42,15 @@ def parse_gstin(value):
         raise HTTPException(status_code=400, detail=str(exc))
 
 
+ACCOUNT_EDIT_ROLES = ("manager", "md", "admin")
+
+
+def ensure_can_edit_accounts(current_user: User) -> None:
+    role = current_user.role.value if hasattr(current_user.role, "value") else str(current_user.role)
+    if role not in ACCOUNT_EDIT_ROLES:
+        raise HTTPException(status_code=403, detail="Only a manager, MD or admin can change an account")
+
+
 def get_account_or_404(db: Session, current_user: User, account_id: int) -> Account:
     row = (
         apply_company_scope(db.query(Account), Account, current_user)
@@ -150,6 +159,7 @@ def enrich_account_route(
     current_user: User = Depends(get_current_user),
     active_team_id: Optional[int] = Depends(get_active_team_id),
 ):
+    ensure_can_edit_accounts(current_user)
     account = get_account_or_404(db, current_user, account_id)
     account = enrich_account(db, account)
     return serialize_account(account, visible_contacts(db, current_user, active_team_id, [account.id])[account.id])
@@ -163,6 +173,7 @@ def patch_account(
     current_user: User = Depends(get_current_user),
     active_team_id: Optional[int] = Depends(get_active_team_id),
 ):
+    ensure_can_edit_accounts(current_user)
     account = get_account_or_404(db, current_user, account_id)
     data = payload.model_dump(exclude_unset=True)
     if "name" in data:
@@ -189,6 +200,7 @@ def delete_account(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    ensure_can_edit_accounts(current_user)
     account = get_account_or_404(db, current_user, account_id)
     linked = (
         apply_company_scope(db.query(Client.id), Client, current_user)
