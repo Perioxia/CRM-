@@ -117,14 +117,8 @@ export default function DealDetailPage() {
   const convertQuoteToInvoice = async (quoteId, salesOrderId) => {
     setQuoteBusy(true);
     try {
-      const res = await api.post(`/sales-orders/${salesOrderId}/invoice`);
-      const invoiceId = res.data.invoice_id;
-      if (invoiceId) {
-        await api.post(`/invoices/${invoiceId}/payment-link`);
-        showToast('Invoice created — payment link ready', 'success');
-      } else {
-        showToast('Invoice created', 'success');
-      }
+      await api.post(`/sales-orders/${salesOrderId}/invoice`);
+      showToast('Invoice created and sent to Purchase for approval', 'success');
       await refreshQuotes();
     } catch (err) {
       showToast(err.response?.data?.detail || 'Could not create invoice', 'error');
