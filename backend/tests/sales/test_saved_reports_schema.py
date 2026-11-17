@@ -3,6 +3,7 @@ from sqlalchemy import inspect
 from app.models.core.enums import DashboardWidgetViz, SavedReportType
 from app.models.sales.dashboard import Dashboard, DashboardWidget
 from app.models.sales.saved_report import SavedReport
+from tests.helpers.factories import create_company
 
 
 def test_saved_report_and_dashboard_tables_exist_and_have_company_id(db_engine):
@@ -21,19 +22,20 @@ def test_saved_report_type_and_widget_viz_values():
 
 
 def test_can_persist_a_saved_report_dashboard_and_widget(db):
+    company = create_company(db, name="Schema Co 1", company_code="S01")
     report = SavedReport(
-        company_id=1,
+        company_id=company.id,
         name="Q3 leads",
         report_type=SavedReportType.LEADS_INVOICES,
         filters={"group_by": "source", "start_date": "2026-07-01"},
     )
-    dashboard = Dashboard(company_id=1, name="Company dashboard")
+    dashboard = Dashboard(company_id=company.id, name="Company dashboard")
     db.add_all([report, dashboard])
     db.commit()
     db.refresh(report)
     db.refresh(dashboard)
     widget = DashboardWidget(
-        company_id=1,
+        company_id=company.id,
         dashboard_id=dashboard.id,
         saved_report_id=report.id,
         visualization=DashboardWidgetViz.KPI,

@@ -46,7 +46,9 @@ def test_app_startup_starts_the_sweeper_when_a_test_turns_calls_on(monkeypatch):
     assert started == [True]
 
 
-def test_call_code_uses_the_in_memory_test_database():
+def test_call_code_uses_the_test_database():
+    from tests.conftest import engine as test_engine
+
     assert call_live.SessionFactory is TestingSessionLocal
     assert call_live.SessionFactory is not SessionLocal
-    assert str(call_live.SessionFactory.kw["bind"].url) == "sqlite:///:memory:"
+    assert call_live.SessionFactory.kw["bind"] is test_engine

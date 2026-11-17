@@ -1,4 +1,5 @@
 from app.models.sales.custom_module import CustomModule, CustomModuleField, CustomModuleRecord
+from tests.helpers.factories import create_company
 
 
 def test_module_columns():
@@ -23,12 +24,13 @@ def test_record_columns():
 
 
 def test_module_and_record_persist(db):
-    mod = CustomModule(company_id=1, name="Sites", slug="sites")
+    company = create_company(db, name="Schema Co 1", company_code="S01")
+    mod = CustomModule(company_id=company.id, name="Sites", slug="sites")
     db.add(mod)
     db.commit()
     db.refresh(mod)
     rec = CustomModuleRecord(
-        company_id=1, module_id=mod.id, title="Roof A", values_json="{}",
+        company_id=company.id, module_id=mod.id, title="Roof A", values_json="{}",
     )
     db.add(rec)
     db.commit()
