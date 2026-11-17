@@ -1,5 +1,7 @@
 """The order to Purchase flow: the rep hears back, an order is decided once, rejected orders are listed,
 the approval page gets the real numbers, and every sale lands in the Stock Register."""
+import re
+
 import pytest
 
 from app.models.sales.notification import Notification
@@ -221,3 +223,40 @@ def test_an_order_from_before_this_change_is_rejected_without_touching_stock(cli
     _as(client, shop["buyer"])
     assert client.post(f"/api/purchase/sales/{order['id']}/reject", params={"reason": "x"}).status_code == 200
     assert _stock(client) == {"FAN": 90, "BLB": 36}
+
+
+def _order_from_quote(client, shop, quantity=3):
+    login_user(client, shop["rep"].email)
+    quote = client.post("/api/quotes", json={"client_id": shop["customer"].id, "items": [
+        {"description": "", "product_id": shop["fan_product"]["id"], "quantity": quantity}]})
+    accepted = client.post(f"/api/quotes/{quote.json()['id']}/accept")
+    invoiced = client.post(f"/api/sales-orders/{accepted.json()['sales_order_id']}/invoice")
+    assert invoiced.status_code == 200, invoiced.text
+    client.headers.pop("Authorization", None)
+    return invoiced.json()["invoice_id"]
+
+
+def test_an_order_from_a_quote_waits_for_purchase(client, db, shop):
+    invoice_id = _order_from_quote(client, shop)
+    _as(client, shop["buyer"])
+    listed = {row["id"]: row["status"] for row in client.get("/api/purchase/sales").json()["sales"]}
+    assert listed[invoice_id] == "Draft"
+    number = client.get(f"/api/purchase/sales/{invoice_id}").json()["number"]
+    assert number.startswith("DRAFT-")
+
+
+def test_approving_an_order_from_a_quote_gives_it_the_company_number(client, db, shop):
+    invoice_id = _order_from_quote(client, shop)
+    _as(client, shop["buyer"])
+    assert client.post(f"/api/purchase/sales/{invoice_id}/approve").status_code == 200
+    final = next(r["number"] for r in client.get("/api/purchase/invoices").json()["invoices"] if r["id"] == invoice_id)
+    assert re.fullmatch(r"INV-\d{3}-\d{4}", final), final  # the company's numbering, not a random one
+    assert [r["remarks"] for r in _register(client, "Fan") if int(r["qty_out"]) > 0] == [f"Sold on order {final}"]
+
+
+def test_rejecting_an_order_from_a_quote_gives_its_stock_back(client, db, shop):
+    invoice_id = _order_from_quote(client, shop, quantity=4)
+    _as(client, shop["buyer"])
+    assert _stock(client)["FAN"] == 96
+    assert client.post(f"/api/purchase/sales/{invoice_id}/reject", params={"reason": "x"}).status_code == 200
+    assert _stock(client)["FAN"] == 100

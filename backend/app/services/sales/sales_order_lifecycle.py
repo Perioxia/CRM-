@@ -102,15 +102,16 @@ def convert_sales_order_to_invoice(db: Session, order: SalesOrder) -> SalesOrder
         raise HTTPException(status_code=400, detail="Sales order already invoiced")
 
     actor = _actor(order)
+    # Like any other order it waits for Purchase, which gives it the company's invoice number.
     invoice = Invoice(
         company_id=order.company_id,
-        invoice_number=f"INV-{uuid4().hex[:8].upper()}",
+        invoice_number=f"DRAFT-{uuid4().hex[:8].upper()}",
         client_id=order.client_id,
         subtotal=order.subtotal,
         tax=order.tax or 0,
         discount=0,
         total=order.total,
-        status=InvoiceStatus.PENDING,
+        status=InvoiceStatus.DRAFT,
         notes=order.notes,
         created_by_id=order.created_by_id,
         cgst=order.cgst,
