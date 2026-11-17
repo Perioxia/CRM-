@@ -16,11 +16,15 @@ from app.models.sales.task import Task
 from app.models.core.team import Team
 from app.models.core.team_membership import TeamMembership
 from app.models.core.company import Company
+from app.models.core.enums import LeadStatus, WORKING_LEAD_STATUSES
 from app.schemas.management import TransferRequestCreate, TransferRequestResponse
 from app.models.hr.transfer_request import TeamTransferRequest
 from app.utils.notify import notify_role_users
 
 router = APIRouter()
+
+# Hand-added leads start as Active and imported ones as New; both are the funnel's first stage.
+_FIRST_STAGE = (LeadStatus.NEW, LeadStatus.ACTIVE)
 
 MD_ROLES = {"md", "admin"}
 POINT_ELIGIBLE_ROLES = {"sales", "manager"}
@@ -116,7 +120,7 @@ def get_md_dashboard(
 
     # AI Brief
     overdue_inv_count = inv_q.filter(Invoice.status == "Overdue").count()
-    stalled_leads = lead_q.filter(Lead.status.in_(["New", "Contacted"]), Lead.created_at < d14_ago).count()
+    stalled_leads = lead_q.filter(Lead.status.in_(WORKING_LEAD_STATUSES), Lead.created_at < d14_ago).count()
     ai_brief = []
     if overdue_inv_count > 0:
         ai_brief.append({"id": 1, "title": "Revenue Risk", "summary": f"{overdue_inv_count} invoice(s) are overdue. Review immediately.", "link": "/md/invoices"})
@@ -136,7 +140,7 @@ def get_md_dashboard(
         ],
         "pipelineSummary": {
             "stageDistribution": [
-                {"stage": "New", "count": lead_q.filter(Lead.status == "New").count()},
+                {"stage": "New", "count": lead_q.filter(Lead.status.in_(_FIRST_STAGE)).count()},
                 {"stage": "Contacted", "count": lead_q.filter(Lead.status == "Contacted").count()},
                 {"stage": "Qualified", "count": lead_q.filter(Lead.status == "Qualified").count()},
                 {"stage": "Proposal", "count": lead_q.filter(Lead.status == "Proposal").count()},
@@ -441,7 +445,7 @@ def get_company_leads(
         "skip": skip,
         "limit": limit,
         "funnel": [
-            {"name": "New", "value": apply_company_scope(db.query(Lead), Lead, current_user).filter(Lead.deleted_at.is_(None)).filter(Lead.status == "New").count()},
+            {"name": "New", "value": apply_company_scope(db.query(Lead), Lead, current_user).filter(Lead.deleted_at.is_(None)).filter(Lead.status.in_(_FIRST_STAGE)).count()},
             {"name": "Contacted", "value": apply_company_scope(db.query(Lead), Lead, current_user).filter(Lead.deleted_at.is_(None)).filter(Lead.status == "Contacted").count()},
             {"name": "Qualified", "value": apply_company_scope(db.query(Lead), Lead, current_user).filter(Lead.deleted_at.is_(None)).filter(Lead.status == "Qualified").count()},
             {"name": "Proposal", "value": apply_company_scope(db.query(Lead), Lead, current_user).filter(Lead.deleted_at.is_(None)).filter(Lead.status == "Proposal").count()},

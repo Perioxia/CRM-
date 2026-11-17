@@ -25,6 +25,11 @@ export default function PurchaseInvoicesPage() {
     const [error, setError] = useState(null);
     const [filter, setFilter] = useState('All');
     const [searchQuery, setSearchQuery] = useState('');
+
+    useEffect(() => {
+        const fromLink = new URLSearchParams(window.location.search).get('search');
+        if (fromLink) setSearchQuery(fromLink);
+    }, []);
     const [showCreateModal, setShowCreateModal] = useState(false);
 
     const fetchInvoices = async () => {

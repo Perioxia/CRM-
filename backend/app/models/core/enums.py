@@ -52,6 +52,16 @@ class LeadStatus(str, enum.Enum):
     LOST_CLIENT = "Lost Client"
 
 
+# Every status a lead can have while someone is still working it. The screens show them all as Active.
+WORKING_LEAD_STATUSES = (
+    LeadStatus.NEW,
+    LeadStatus.ACTIVE,
+    LeadStatus.CONTACTED,
+    LeadStatus.QUALIFIED,
+    LeadStatus.PROPOSAL,
+)
+
+
 class CompanyStatus(str, enum.Enum):
     ACTIVE = "active"
     PENDING = "pending"

@@ -39,7 +39,7 @@ export default function TopBar() {
     return (
         <header className="relative z-40 bg-surface border-b border-border h-14 flex items-center justify-between gap-4 px-4 sm:px-5">
             <div className="flex items-center gap-3 min-w-0 flex-1">
-                <SearchDropdown />
+                {roleKey !== 'admin' && <SearchDropdown />}
             </div>
 
             <div className="flex items-center gap-1 shrink-0">
