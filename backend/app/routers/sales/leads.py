@@ -62,18 +62,11 @@ from app.schemas.sales import (
     SalesDashboardResponse, SalesDashboardMetrics, SalesDashboardTask,
 )
 from app.schemas.admin import MessageResponse
-from app.models.core.enums import UserRole
+from app.models.core.enums import UserRole, WORKING_LEAD_STATUSES
 
 router = APIRouter()
 
-# The screens show all of these as Active.
-_WORKING_STATUSES = (
-    LeadStatus.NEW,
-    LeadStatus.ACTIVE,
-    LeadStatus.CONTACTED,
-    LeadStatus.QUALIFIED,
-    LeadStatus.PROPOSAL,
-)
+_WORKING_STATUSES = WORKING_LEAD_STATUSES
 
 
 def _user_role_str(user: User) -> str:

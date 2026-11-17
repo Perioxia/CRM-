@@ -76,17 +76,17 @@ def get_purchase_dashboard(
     overdue = inv_q.filter(Invoice.status == "Overdue").count()
     draft = inv_q.filter(Invoice.status == "Draft").count()
     
-    # Get recent pending invoices
-    pending_invoices = inv_q.filter(Invoice.status == "Pending").order_by(Invoice.created_at.desc()).limit(5).all()
+    # Orders still waiting for Purchase to approve or reject
+    waiting = inv_q.filter(Invoice.status == "Draft").order_by(Invoice.created_at.desc()).limit(5).all()
     
-    client_ids = {inv.client_id for inv in pending_invoices if inv.client_id}
-    creator_ids = {inv.created_by_id for inv in pending_invoices if inv.created_by_id}
+    client_ids = {inv.client_id for inv in waiting if inv.client_id}
+    creator_ids = {inv.created_by_id for inv in waiting if inv.created_by_id}
     
     clients = {c.id: c for c in apply_company_scope(db.query(Client), Client, current_user).filter(Client.id.in_(client_ids)).all()} if client_ids else {}
     creators = {u.id: u for u in apply_company_scope(db.query(User), User, current_user).filter(User.id.in_(creator_ids)).all()} if creator_ids else {}
 
     approval_queue = []
-    for inv in pending_invoices:
+    for inv in waiting:
         client = clients.get(inv.client_id)
         creator = creators.get(inv.created_by_id)
         approval_queue.append({

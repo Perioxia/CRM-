@@ -48,9 +48,9 @@ def ensure_user_teams(db: Session, user: User) -> list[Team]:
         _ensure_membership(db, user, team)
         if user.team_id is None:
             user.team_id = team.id
-            db.commit()
-            db.refresh(user)
-        return company_teams
+        db.commit()
+        db.refresh(user)
+        return [team]
 
     team = Team(company_id=user.company_id, name="Default")
     db.add(team)

@@ -15,7 +15,7 @@ import CsvImportModal, { useImportUndo } from '../shared/CsvImportModal';
 function formatMoney(value) {
   const n = Number(value);
   if (Number.isNaN(n)) return value ?? '—';
-  return n.toLocaleString(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
+  return n.toLocaleString('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 });
 }
 
 function roleOf(user) {

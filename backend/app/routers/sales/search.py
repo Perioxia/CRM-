@@ -3,6 +3,7 @@ Global Search API
 Searches across leads, clients, and invoices simultaneously.
 """
 from typing import Optional
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
@@ -60,7 +61,8 @@ def global_search(
             "title": c.name,
             "subtitle": c.company or c.email or "",
             "status": "Active",
-            "url": f"/{role}/clients/{c.id}" if role in ("sales", "manager", "md") else "/md/clients"
+            "url": f"/{role}/clients/{c.id}" if role in ("sales", "manager", "md")
+            else f"/purchase/invoices?search={quote(c.name)}" if role == "purchase" else "/md/clients"
         })
 
     # Search invoices

@@ -17,7 +17,7 @@ from app.services.sales.lead_ownership import ensure_assignable, manager_may_mov
 from app.utils.notify import notify_role_users, send_notification
 from app.models.hr.transfer_request import TeamTransferRequest
 from app.schemas.management import TransferRequestCreate, TransferRequestResponse
-from app.models.core.enums import InvoiceStatus, LeadStatus
+from app.models.core.enums import InvoiceStatus, LeadStatus, WORKING_LEAD_STATUSES
 from app.models.core.team import Team
 from app.models.core.team_membership import TeamMembership
 from app.models.sales.audit import AuditLog
@@ -118,7 +118,7 @@ def get_manager_dashboard(
     lead_stats = apply_company_scope(db.query(
         Lead.assigned_to_id,
         func.sum(case((Lead.status == LeadStatus.CONVERTED, 1), else_=0)).label("converted_count"),
-        func.sum(case((Lead.status == LeadStatus.ACTIVE, 1), else_=0)).label("active_count")
+        func.sum(case((Lead.status.in_(WORKING_LEAD_STATUSES), 1), else_=0)).label("active_count")
     ), Lead, current_user).filter(Lead.deleted_at.is_(None))
     if team_member_ids and active_team_id is not None:
         lead_stats = lead_stats.filter(Lead.team_id == active_team_id).group_by(Lead.assigned_to_id).all()
@@ -347,13 +347,13 @@ def get_team_member_detail(
     
     # Get lead counts (company-scoped)
     lead_q = apply_company_scope(db.query(Lead), Lead, current_user).filter(Lead.deleted_at.is_(None))
-    leads_contacted = lead_q.filter(Lead.assigned_to_id == user_id, Lead.status == LeadStatus.ACTIVE).count()
+    leads_contacted = lead_q.filter(Lead.assigned_to_id == user_id, Lead.status.in_(WORKING_LEAD_STATUSES)).count()
     leads_converted = lead_q.filter(Lead.assigned_to_id == user_id, Lead.status == LeadStatus.CONVERTED).count()
     
     # Get active leads
     active_leads = lead_q.filter(
         Lead.assigned_to_id == user_id,
-        Lead.status == LeadStatus.ACTIVE
+        Lead.status.in_(WORKING_LEAD_STATUSES)
     ).limit(5).all()
     
     return {
