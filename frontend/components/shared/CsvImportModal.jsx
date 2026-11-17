@@ -9,7 +9,9 @@ const NONE = '__none__';
 
 const ENTITY_CONFIG = {
   leads: {
-    title: 'Import leads from CSV',
+    title: 'Import leads from CSV or Excel',
+    accept: '.csv,.xlsx',
+    pick: 'Choose CSV or Excel (.xlsx) file',
     fields: [
       { key: 'name', label: 'Name (required)' },
       { key: 'email', label: 'Email (optional)' },
@@ -148,7 +150,7 @@ export default function CsvImportModal({ entity, isOpen, onClose, onRefresh }) {
       setPreview(res.data);
     } catch (err) {
       const detail = err.response?.data?.detail;
-      setError(typeof detail === 'string' ? detail : 'Could not read CSV.');
+      setError(typeof detail === 'string' ? detail : 'Could not read the file.');
     } finally {
       setLoading(false);
     }
@@ -199,8 +201,8 @@ export default function CsvImportModal({ entity, isOpen, onClose, onRefresh }) {
         <div className="p-5 overflow-y-auto space-y-4">
           <label className="flex flex-col items-center justify-center border-2 border-dashed border-slate-300 dark:border-slate-600 rounded-lg p-8 cursor-pointer hover:border-blue-400">
             <Upload size={24} className="text-slate-400 mb-2" />
-            <span className="text-sm text-slate-600 dark:text-slate-300">{file ? file.name : 'Choose CSV file'}</span>
-            <input type="file" accept=".csv" className="hidden" onChange={handleFile} />
+            <span className="text-sm text-slate-600 dark:text-slate-300">{file ? file.name : (config.pick || 'Choose CSV file')}</span>
+            <input type="file" accept={config.accept || '.csv'} className="hidden" onChange={handleFile} />
           </label>
 
           {loading && (

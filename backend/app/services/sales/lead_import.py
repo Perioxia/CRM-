@@ -1,7 +1,11 @@
 import csv
 import io
 import json
+import zipfile
+from datetime import date, datetime
 from typing import Optional
+
+from openpyxl import load_workbook
 
 from sqlalchemy.orm import Session
 
@@ -78,6 +82,42 @@ def parse_mapping(raw: Optional[str]) -> Optional[dict]:
     return out
 
 
+MAX_ROWS = 500
+
+
+def _excel_cell(value) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "TRUE" if value else "FALSE"
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))  # a phone typed as a number comes back as 9876543210.0
+    if isinstance(value, datetime):
+        return value.date().isoformat() if value.time() == datetime.min.time() else value.isoformat(sep=" ")
+    if isinstance(value, date):
+        return value.isoformat()
+    return str(value)
+
+
+def excel_to_csv(contents: bytes) -> bytes:
+    """The first sheet of an .xlsx file as CSV, header row plus at most MAX_ROWS rows, for the CSV import."""
+    try:
+        book = load_workbook(io.BytesIO(contents), read_only=True, data_only=True)
+    except (zipfile.BadZipFile, KeyError, ValueError, OSError) as exc:
+        raise ValueError("Could not read that Excel file. Save it as .xlsx and try again.") from exc
+    try:
+        sheet = book.worksheets[0]
+        out = io.StringIO()
+        writer = csv.writer(out)
+        for index, row in enumerate(sheet.iter_rows(values_only=True)):
+            if index > MAX_ROWS:
+                break
+            writer.writerow([_excel_cell(value) for value in row])
+    finally:
+        book.close()
+    return out.getvalue().encode("utf-8")
+
+
 def _read_csv(contents: bytes) -> tuple[list[str], list[dict]]:
     text = contents.decode("utf-8-sig")
     reader = csv.DictReader(io.StringIO(text))
@@ -85,7 +125,7 @@ def _read_csv(contents: bytes) -> tuple[list[str], list[dict]]:
     rows = []
     for row in reader:
         rows.append({k: (v if v is not None else "") for k, v in row.items() if k is not None})
-        if len(rows) >= 500:
+        if len(rows) >= MAX_ROWS:
             break
     return headers, rows
 
