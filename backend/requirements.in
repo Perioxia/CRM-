@@ -30,3 +30,5 @@ redis==5.3.1
 pytest==7.4.3
 # Twilio Voice softphone
 twilio==9.6.0
+# Reading Excel (.xlsx) lead imports
+openpyxl==3.1.5

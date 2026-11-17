@@ -29,7 +29,7 @@ from app.models.core.company_settings import CompanySettings
 from app.utils.audit import log_activity
 from app.utils.helpers import normalize_email, normalize_phone
 from app.services.sales.lead_access import user_role
-from app.services.sales.lead_import import insert_new_leads, preview_import as preview_leads
+from app.services.sales.lead_import import excel_to_csv, insert_new_leads, preview_import as preview_leads
 from app.services.sales.lead_sheet import save_sheet_url, serialize_sheet, sync_sheet
 from app.services.sales.client_import import new_clients_from_preview, preview_import as preview_clients
 from app.services.sales.deal_import import new_deals_from_preview, preview_import as preview_deals
@@ -40,6 +40,19 @@ from app.models.sales.pipeline import PipelineStage
 router = APIRouter()
 logger = logging.getLogger("app")
 MAX_CSV_BYTES = 2 * 1024 * 1024  # 2 MB hard cap per upload
+
+
+def _lead_file_bytes(file: UploadFile) -> bytes:
+    """Lead imports take .csv or .xlsx. Excel is turned into CSV so both go through the same checks."""
+    name = (file.filename or "").lower()
+    if name.endswith(".csv"):
+        return _csv_bytes(file)
+    if not name.endswith(".xlsx"):
+        raise HTTPException(status_code=400, detail="Invalid file type. Use a CSV or Excel (.xlsx) file.")
+    contents = file.file.read(MAX_CSV_BYTES + 1)
+    if len(contents) > MAX_CSV_BYTES:
+        raise HTTPException(status_code=413, detail="File too large. Maximum size is 2 MB.")
+    return excel_to_csv(contents)
 
 
 def _csv_bytes(file: UploadFile) -> bytes:
@@ -171,7 +184,7 @@ def preview_leads_import(
     if current_user.company_id is None:
         raise HTTPException(status_code=403, detail="User must be assigned to a company")
     try:
-        contents = _csv_bytes(file)
+        contents = _lead_file_bytes(file)
         return preview_leads(db, current_user.company_id, contents, mapping)
     except UnicodeDecodeError:
         raise HTTPException(status_code=400, detail="Invalid CSV encoding. Please upload a UTF-8 encoded file.")
@@ -196,7 +209,7 @@ def commit_leads_import(
     if current_user.company_id is None:
         raise HTTPException(status_code=403, detail="User must be assigned to a company")
     try:
-        contents = _csv_bytes(file)
+        contents = _lead_file_bytes(file)
         preview = preview_leads(db, current_user.company_id, contents, mapping)
         team_id = _team_for_import(db, current_user, active_team_id)
         created = insert_new_leads(
