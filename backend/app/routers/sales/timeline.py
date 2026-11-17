@@ -14,7 +14,7 @@ from app.models.sales.audit import AuditLog
 from app.services.sales.activity_timeline import build_activity_feed, require_timeline_parent
 from app.models.finance.invoice import Invoice
 from app.routers.sales.deals import _ensure_deal_row_access
-from app.services.sales.lead_access import ensure_can_view_lead
+from app.services.sales.lead_access import ensure_can_view_lead, user_role
 from app.services.sales.record_access import ensure_can_view_client, ensure_can_view_client_record
 from app.utils.datetime_json import isoformat_utc
 
@@ -55,6 +55,8 @@ def get_timeline(
 
     if entity_type not in _AUDIT_ONLY:
         raise HTTPException(status_code=400, detail="Invalid entity type")
+    if entity_type in ("task", "user") and user_role(current_user) not in ("md", "admin"):
+        raise HTTPException(status_code=403, detail="Only MD or admin can read this history")
 
     query = apply_company_scope(db.query(AuditLog), AuditLog, current_user).filter(
         AuditLog.entity_type == entity_type,

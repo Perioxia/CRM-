@@ -139,6 +139,24 @@ def _owner_and_team_for_new_deal(db: Session, current_user: User, payload: DealC
     return assigned_to_id, team_id
 
 
+def _ensure_owner_and_team_change(db: Session, current_user: User, deal: Deal, data: dict) -> None:
+    """A rep cannot hand a deal to someone else or move it off their team; a manager keeps it on a team
+    they are on, with an owner from that team. Otherwise the deal disappears from their board."""
+    role = _role(current_user)
+    if role not in ("sales", "manager"):
+        return
+    owner = data.get("assigned_to_id", deal.assigned_to_id)
+    team_id = data.get("team_id", deal.team_id)
+    if role == "sales" and owner != current_user.id:
+        raise HTTPException(status_code=403, detail="Sales executives cannot assign deals to others")
+    if "team_id" in data and (team_id is None or not user_on_team(db, current_user, team_id)):
+        raise HTTPException(status_code=403, detail="You are not a member of the selected team")
+    if owner is not None and owner != current_user.id and team_id is not None:
+        assignee = db.query(User).filter(User.id == owner).first()
+        if assignee is None or not user_on_team(db, assignee, team_id):
+            raise HTTPException(status_code=403, detail="Cannot assign a deal outside its team")
+
+
 def _ensure_deal_row_access(deal: Deal, current_user: User, active_team_id: Optional[int]) -> None:
     """Mirror leads.py get_lead's role check on by-id access."""
     role = _role(current_user)
@@ -355,6 +373,8 @@ def update_deal(deal_id: int, payload: DealUpdate, db: Session = Depends(get_db)
     )
     if data.get("lead_id") != deal.lead_id:
         ensure_can_work_lead_id(db, current_user, active_team_id, data.get("lead_id"))
+    if "assigned_to_id" in data or "team_id" in data:
+        _ensure_owner_and_team_change(db, current_user, deal, data)
     for field, value in data.items():
         setattr(deal, field, value)
     if "amount" in data:
