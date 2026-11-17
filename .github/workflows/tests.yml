@@ -83,16 +83,15 @@ jobs:
         run: alembic upgrade head
       - name: Run tests
         run: python -m pytest -q -p no:cacheprovider -rsx
-      - name: Run lead tests on PostgreSQL
+      # The whole suite again on PostgreSQL: SQLite hides problems such as column length limits,
+      # foreign keys and date comparisons (the mass email page crashed only on Postgres).
+      - name: Run all tests on PostgreSQL
         env:
           PGPASSWORD: ci
-          CRM_PG_TEST_URL: postgresql://ci:ci@127.0.0.1:5432/crm_ci_leads_test
+          CRM_PG_TEST_URL: postgresql://ci:ci@127.0.0.1:5432/crm_ci_full_test
         run: |
-          psql -h 127.0.0.1 -U ci -d crm_ci_test -c "CREATE DATABASE crm_ci_leads_test"
-          python -m pytest tests/sales/test_lead_access.py tests/sales/test_lead_claim.py tests/sales/test_lead_data.py tests/sales/test_lead_screens.py \
-            tests/sales/test_client_page_notes.py tests/sales/test_deals_new_owner.py tests/sales/test_mass_email_api.py \
-            tests/sales/test_mass_email_service.py tests/sales/test_mass_email_cross_tenant.py \
-            tests/sales/test_client_record_access.py tests/finance/test_purchase_orders_flow.py -q -p no:cacheprovider -rsx
+          psql -h 127.0.0.1 -U ci -d crm_ci_test -c "CREATE DATABASE crm_ci_full_test"
+          python -m pytest -q -p no:cacheprovider -rsx
 
   frontend:
     runs-on: ubuntu-26.04

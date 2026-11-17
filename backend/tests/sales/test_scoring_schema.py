@@ -1,6 +1,7 @@
 from app.models.sales.scoring import ScoringRule
 from app.models.sales.lead import Lead
 from app.models.sales.deal import Deal
+from tests.helpers.factories import create_company
 
 
 def test_scoring_rule_table_columns():
@@ -19,8 +20,9 @@ def test_score_columns_on_lead_and_deal():
 
 
 def test_scoring_rule_persists(db):
+    company = create_company(db, name="Schema Co 1", company_code="S01")
     rule = ScoringRule(
-        company_id=1, entity_type="lead", field="source",
+        company_id=company.id, entity_type="lead", field="source",
         operator="eq", value="Referral", points=20, is_active=True,
     )
     db.add(rule)

@@ -1,4 +1,5 @@
 from app.models.sales.marketplace import MarketplaceInstall
+from tests.helpers.factories import create_company
 
 
 def test_install_columns():
@@ -10,8 +11,9 @@ def test_install_columns():
 
 
 def test_install_persists(db):
+    company = create_company(db, name="Schema Co 1", company_code="S01")
     row = MarketplaceInstall(
-        company_id=1, app_slug="scoring", status="installed",
+        company_id=company.id, app_slug="scoring", status="installed",
     )
     db.add(row)
     db.commit()

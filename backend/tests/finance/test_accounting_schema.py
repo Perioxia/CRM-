@@ -1,4 +1,5 @@
 from app.models.finance.accounting import AccountingConnection, AccountingSyncItem
+from tests.helpers.factories import create_company
 
 
 def test_connection_columns():
@@ -19,7 +20,8 @@ def test_sync_item_columns():
 
 
 def test_connection_persists(db):
-    row = AccountingConnection(company_id=1, provider="tally", status="connected")
+    company = create_company(db, name="Schema Co 1", company_code="S01")
+    row = AccountingConnection(company_id=company.id, provider="tally", status="connected")
     db.add(row)
     db.commit()
     db.refresh(row)
@@ -28,8 +30,9 @@ def test_connection_persists(db):
 
 
 def test_sync_item_persists(db):
+    company = create_company(db, name="Schema Co 1", company_code="S01")
     row = AccountingSyncItem(
-        company_id=1, entity_type="invoice", entity_id=9,
+        company_id=company.id, entity_type="invoice", entity_id=9,
         provider="tally", external_id="abc", status="synced", payload_hash="h",
     )
     db.add(row)

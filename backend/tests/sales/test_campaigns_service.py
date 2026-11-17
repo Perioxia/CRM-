@@ -4,6 +4,7 @@ import pytest
 from fastapi import HTTPException
 
 from app.models.sales.client import Client
+from app.models.sales.email_log import EmailLog
 from app.models.sales.lead import Lead
 from app.services.sales.campaigns import (
     MAX_RECIPIENTS,
@@ -11,6 +12,15 @@ from app.services.sales.campaigns import (
     send_campaign,
 )
 from tests.helpers.factories import create_company
+
+
+def _email_log(db, company_id):
+    """A real email log row: on Postgres a campaign recipient must point at one that exists."""
+    row = EmailLog(company_id=company_id, to_email="x@x.com", subject="s", body="b", status="sent")
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row
 
 
 def _lead(db, company_id, name, email=None):
@@ -31,7 +41,7 @@ def test_send_to_leads_with_email(mock_deliver, db):
         audience="leads", created_by_id=None,
     )
     mock_deliver.return_value.status = "sent"
-    mock_deliver.return_value.id = 9
+    mock_deliver.return_value.id = _email_log(db, company.id).id
     result = send_campaign(db, company.id, camp, sent_by_id=None)
     assert result["sent"] == 1
     assert result["skipped"] == 1
@@ -59,7 +69,7 @@ def test_resend_rejected(db):
     )
     with patch("app.services.sales.campaigns.deliver_and_log") as mock_deliver:
         mock_deliver.return_value.status = "sent"
-        mock_deliver.return_value.id = 1
+        mock_deliver.return_value.id = _email_log(db, company.id).id
         send_campaign(db, company.id, camp, sent_by_id=None)
     with pytest.raises(HTTPException) as ei:
         send_campaign(db, company.id, camp, sent_by_id=None)
@@ -90,7 +100,7 @@ def test_send_to_clients(db):
     )
     with patch("app.services.sales.campaigns.deliver_and_log") as mock_deliver:
         mock_deliver.return_value.status = "sent"
-        mock_deliver.return_value.id = 3
+        mock_deliver.return_value.id = _email_log(db, company.id).id
         result = send_campaign(db, company.id, camp, sent_by_id=None)
     assert result["sent"] == 1
     assert mock_deliver.call_args.kwargs["client_id"] is not None

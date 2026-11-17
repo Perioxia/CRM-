@@ -1,4 +1,5 @@
 from app.models.sales.campaign import EmailCampaign, EmailCampaignRecipient
+from tests.helpers.factories import create_company
 
 
 def test_campaign_columns():
@@ -18,8 +19,9 @@ def test_recipient_columns():
 
 
 def test_campaign_persists(db):
+    company = create_company(db, name="Schema Co 1", company_code="S01")
     row = EmailCampaign(
-        company_id=1, name="Spring", subject="Hi", body="Hello",
+        company_id=company.id, name="Spring", subject="Hi", body="Hello",
         audience="leads", status="draft",
     )
     db.add(row)
@@ -27,7 +29,7 @@ def test_campaign_persists(db):
     db.refresh(row)
     assert row.id is not None
     rec = EmailCampaignRecipient(
-        company_id=1, campaign_id=row.id, to_email="a@x.com", status="sent",
+        company_id=company.id, campaign_id=row.id, to_email="a@x.com", status="sent",
     )
     db.add(rec)
     db.commit()

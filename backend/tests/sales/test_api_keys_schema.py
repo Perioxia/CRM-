@@ -4,6 +4,7 @@ from app.models.billing import Plan
 from app.models.core.api_key import ApiKey, ApiUsageDaily
 from app.models.core.enums import ApiKeyAccess
 from app.services.billing.seed import seed_plans, backfill_api_quotas
+from tests.helpers.factories import create_company
 
 
 def test_api_key_tables_exist_with_company_id(db_engine):
@@ -23,14 +24,15 @@ def test_api_key_access_values():
 
 
 def test_can_persist_api_key_and_usage_row(db):
+    company = create_company(db, name="Schema Co 1", company_code="S01")
     key = ApiKey(
-        company_id=1,
+        company_id=company.id,
         name="Zapier",
         prefix="crm_live_ab12cd34",
         token_hash="a" * 64,
         access=ApiKeyAccess.READ,
     )
-    usage = ApiUsageDaily(company_id=1, usage_date=__import__("datetime").date(2026, 8, 25), request_count=3)
+    usage = ApiUsageDaily(company_id=company.id, usage_date=__import__("datetime").date(2026, 8, 25), request_count=3)
     db.add_all([key, usage])
     db.commit()
     db.refresh(key)

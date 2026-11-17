@@ -1,4 +1,5 @@
 from app.models.sales.support_case import SupportCase, WebToCaseForm
+from tests.helpers.factories import create_company
 
 
 def test_case_columns():
@@ -16,8 +17,9 @@ def test_form_columns():
 
 
 def test_case_persists(db):
+    company = create_company(db, name="Schema Co 1", company_code="S01")
     row = SupportCase(
-        company_id=1, subject="Leak", body="Roof leak", status="open",
+        company_id=company.id, subject="Leak", body="Roof leak", status="open",
         requester_email="a@x.com", source="crm",
     )
     db.add(row)

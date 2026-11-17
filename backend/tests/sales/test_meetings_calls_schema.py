@@ -4,7 +4,9 @@ from sqlalchemy import inspect
 
 from app.models.core.enums import CallDirection, MeetingStatus
 from app.models.sales.call_log import CallLog
+from app.models.sales.lead import Lead
 from app.models.sales.meeting import Meeting
+from tests.helpers.factories import create_company
 
 
 def test_meeting_and_call_tables_exist_and_have_company_id(db_engine):
@@ -24,17 +26,21 @@ def test_meeting_status_and_call_direction_values():
 
 
 def test_can_persist_a_meeting_and_a_call(db):
+    company = create_company(db, name="Schema Co 1", company_code="S01")
+    lead = Lead(company_id=company.id, name="Schema Lead", status="Active")
+    db.add(lead)
+    db.commit()
     meeting = Meeting(
-        company_id=1,
+        company_id=company.id,
         subject="Site visit",
         starts_at=datetime(2026, 9, 1, 10, 0, 0),
-        lead_id=1,
+        lead_id=lead.id,
     )
     call = CallLog(
-        company_id=1,
+        company_id=company.id,
         direction=CallDirection.OUTBOUND,
         logged_at=datetime(2026, 9, 1, 9, 0, 0),
-        lead_id=1,
+        lead_id=lead.id,
     )
     db.add_all([meeting, call])
     db.commit()

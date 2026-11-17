@@ -1,3 +1,4 @@
+import pytest
 from app.tenancy import (
     RLS_EXCLUDE,
     bind_tenant,
@@ -50,8 +51,8 @@ def test_enable_rls_noop_on_sqlite():
     from app.tenancy import enable_rls, is_postgres_bind
     from tests.conftest import engine as test_engine
 
-    # The app engine may be Postgres when DATABASE_URL is set. Pytest uses SQLite.
-    assert test_engine.dialect.name == "sqlite"
+    if test_engine.dialect.name != "sqlite":
+        pytest.skip("checks the SQLite case; this run uses Postgres")
     assert is_postgres_bind(test_engine) is False
     assert enable_rls(test_engine) == 0
     reset_tenant()

@@ -1,4 +1,5 @@
 from app.models.sales.mass_email import MassEmailBlast
+from tests.helpers.factories import create_company
 
 
 def test_blast_columns():
@@ -10,8 +11,9 @@ def test_blast_columns():
 
 
 def test_blast_persists(db):
+    company = create_company(db, name="Schema Co 1", company_code="S01")
     row = MassEmailBlast(
-        company_id=1, subject="Hi", audience="leads",
+        company_id=company.id, subject="Hi", audience="leads",
         sent_count=2, failed_count=0, skipped_count=1,
     )
     db.add(row)
